@@ -1,0 +1,28 @@
+{
+  "steps": [
+    "进入路由组页 -> 行数 1",
+    "新建组 -> 编辑区已出现",
+    "填组名 -> walk-grp / 巡检组",
+    "空成员保存 -> toast=至少加一个成员，否则这个组对外不可用",
+    "打开成员选择弹窗 -> 标题=添加成员",
+    "可选模型数 -> 81",
+    "加入第一个模型 -> 剩 正在拉取模型目录…",
+    "剩余可加模型 -> 80",
+    "成员数 -> 2",
+    "改优先级 -> 250 · 脏标记=是",
+    "打开规则弹窗 -> 标题=添加规则",
+    "星期可选数 -> 7",
+    "提交规则 -> 弹窗还开着=false toast=",
+    "规则落库 -> {\"targetProviderId\":\"trae\",\"targetModel\":\"Doubao-Seed-2.1-Turbo\",\"minPromptTokens\":1500,\"requireImage\":true,\"compactOnly\":false,\"folders\":[\"~/work/acme\",\"D:/proj/site\"],\"startMinuteOfDay\":1320,\"endMinuteOfDay\":120,\"daysOfWeek\":[1,3,5]}",
+    "保存组 -> toast=已保存路由组「巡检组」 脏=否",
+    "保存后列表 -> 2 行",
+    "重进页面 -> 编辑区=在 行数=2",
+    "打开 auto 组 -> 只读=是 保存按钮=无",
+    "删除巡检组 -> toast=已删除路由组「walk-grp」 剩余行=1",
+    "横向溢出 -> 0 处"
+  ],
+  "errors": [],
+  "overflow": [],
+  "exceptions": [],
+  "consoleErrors": []
+}

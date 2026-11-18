@@ -1,0 +1,939 @@
+/* AI Gateway WebView2 前端样式
+   颜色全部走 kd-design-system.css 的令牌，深浅主题切换只换 data-kd-theme 属性。
+   布局用 flex/grid，窗口缩放零成本——这是替换 Swing 自绘的核心收益。 */
+
+:root {
+  --top: var(--kd-color-background-top);
+  --mid: var(--kd-color-background-middle);
+  --base: var(--kd-color-background-base);
+  --plate: var(--kd-color-background-plate);
+  --group: var(--kd-color-background-group);
+  --line: var(--kd-color-line-regular);
+  --line-light: var(--kd-color-line-light);
+  --text: var(--kd-color-text-primary);
+  --text2: var(--kd-color-text-secondary);
+  --text3: var(--kd-color-text-tertiary);
+  --brand: var(--kd-color-public-normal);
+  --brand-light: var(--kd-color-public-light);
+  --ok: var(--kd-color-success-normal);
+  --ok-bg: var(--kd-color-success-light);
+  --err: var(--kd-color-error-normal);
+  --err-bg: var(--kd-color-error-light);
+  --warn: var(--kd-color-warning-normal);
+  --warn-bg: var(--kd-color-warning-light);
+  --gold: #C08A2E;
+  --gold-bg: #4A3A1D;
+  --radius: 8px;
+  --font: var(--kd-font-family);
+  --mono: "Cascadia Mono", "Consolas", "Sarasa Mono SC", ui-monospace, monospace;
+}
+
+[data-kd-theme="light"] {
+  --gold: #9A6B12;
+  --gold-bg: #FBF3E2;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%; overflow: hidden;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--base);
+  /* 拖选文本会让界面像网页而不像桌面应用：默认关掉，需要选的地方单独开 user-select */
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ---------------- 标题栏 ----------------
+   标题栏已改为 C# 侧的 TitleBarPanel（shell/TitleBar.cs）绘制，HTML 里不再有它。
+   原因：WebView2 的子窗口铺满自己的区域，HTML 画的标题栏会吃掉那圈鼠标像素，
+   父窗口的 WM_NCHITTEST 永不触发 → 拖动/缩放全部失效（本版前三次尝试都栽在这里）。 */
+
+/* ---------------- 主框架 ---------------- */
+.shell { flex: 1; display: flex; min-height: 0; }
+
+.sidebar {
+  width: 176px; flex: 0 0 176px;
+  background: var(--plate);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  padding: 8px 0 6px;
+  overflow: hidden;
+}
+
+/* 导航区：唯一可滚动的部分。
+   实测内容高 593px / 可视 508px（窗口 820、WebView2 区 762 时），
+   原来整条 sidebar 一起 overflow-y:auto —— 于是底部的接入地址被排到 585px 处、
+   永远要滚才能看到，看着就像「压根没有这一块」。
+   拆成「导航滚动 + 底部固定」后，接入地址恒定可见。 */
+.nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;      /* flex 子项默认 min-height:auto，不写就会把 footer 顶出去 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+/* 分组间距按「12 项刚好放进 420px」定：实测 nav-scroll 可视高 420、
+   原间距下内容 433（溢出 13px，第 12 项被 footer 压住）。
+   把 3 个分组标签的上/下内边距 8+4 → 6+3（省 3×3=9px）、
+   分组自身内边距 2 → 1（省 3×2=6px），合计让出 15px。 */
+.nav-group { padding: 1px 0; }
+.nav-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.6px;
+  color: var(--text3); text-transform: uppercase;
+  padding: 6px 16px 3px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  margin: 1px 8px; padding: 5px 10px;
+  border-radius: 6px; cursor: pointer;
+  color: var(--text2); text-decoration: none;
+  font-size: 13px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.nav-item svg { flex: 0 0 15px; opacity: 0.85; }
+.nav-item:hover { background: var(--kd-color-state-hover); color: var(--text); }
+.nav-item.active { background: var(--brand-light); color: var(--brand); font-weight: 600; }
+.nav-item.active svg { opacity: 1; }
+
+/* 底部固定：导航区滚动时它不动，接入地址永远可见（原来的单列滚动会把它推出去）。 */
+.sidebar-foot {
+  flex: 0 0 auto;
+  padding: 8px 14px 2px;
+  border-top: 1px solid var(--line);
+}
+/* 接入地址：176px 侧栏里 143px 可用宽度装不下 http://127.0.0.1:18237/v1，
+   省略号会把端口截掉（端口恰恰是派生实例唯一有用的信息）。
+   改成两行：第一行 host:port，第二行 /v1，都不截断。 */
+.base-url {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text2);
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-all;
+  user-select: text;
+}
+.base-url-hint { font-size: 10px; color: var(--text3); margin-top: 2px; }
+
+/* 派生实例标记：同机可能开着多个实例（不同数据目录），侧栏必须能一眼分清。
+   默认目录不显示，只有派生实例才出现，避免给单实例用户多一行噪音。 */
+.inst-badge {
+  margin-top: 6px;
+  font-family: var(--mono); font-size: 10px; line-height: 1.4;
+  color: var(--warn, #d9a44a);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  user-select: text;
+}
+
+.content { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--base); }
+
+.page-head {
+  flex: 0 0 auto; display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; padding: 12px 14px 8px;
+}
+.page-head h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.2px; }
+.page-head p { margin: 3px 0 0; font-size: 12px; color: var(--text2); }
+.page-head-actions { display: flex; gap: 8px; }
+
+.page-body {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 0 14px 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  min-height: 0;
+}
+
+/* 细滚动条，避免默认滚动条破坏暗色观感 */
+.page-body::-webkit-scrollbar, .sidebar::-webkit-scrollbar,
+.table-wrap::-webkit-scrollbar, .log-box::-webkit-scrollbar { width: 9px; height: 9px; }
+.page-body::-webkit-scrollbar-thumb, .sidebar::-webkit-scrollbar-thumb,
+.table-wrap::-webkit-scrollbar-thumb, .log-box::-webkit-scrollbar-thumb {
+  background: var(--kd-color-line-medium); border-radius: 999px; border: 2px solid transparent;
+  background-clip: content-box;
+}
+.page-body::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------------- 卡片 ---------------- */
+.card {
+  background: var(--top);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 15px 8px; gap: 12px;
+}
+.card-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.card-head .hint { font-size: 11px; color: var(--text2); white-space: nowrap; }
+.card-body { padding: 0 15px 13px; min-width: 0; overflow: hidden; }
+.card-body.flush { padding: 0; }
+
+/* 指标卡网格：auto-fit 让窄窗口自动减少列数。
+   180px 下限同理——本机内容区只有 ~543 CSS px，180 才能排出 2~3 列不溢出。 */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px;
+}
+.metric {
+  background: var(--top); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 11px 15px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.metric .label { font-size: 12px; color: var(--text2); }
+.metric .value {
+  font-size: 23px; font-weight: 600; line-height: 1.25;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.metric .value.gold { color: var(--gold); }
+.metric .value.ok { color: var(--ok); }
+.metric .value.warn { color: var(--warn); }
+.metric .note {
+  font-size: 11px; color: var(--text2); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-height: 14px;
+}
+
+/* 两栏并排区域（拓扑+容量、趋势+最近调用）。
+   下限 240px 而不是 300px：本机是 150% 缩放，1280×800 屏幕的逻辑工作区只有
+   853×533，内容区扣掉侧栏与留白后仅 ~543 CSS px。300px 下限需要 612px，
+   auto-fit 会直接退化成单列（实测 innerWidth=787、split2 宽 543、只算出 1 列）。
+   240px 下限在同样宽度下能稳定出两列，再窄才自动堆叠。 */
+.split2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 12px;
+}
+/* grid item 的 automatic minimum size 默认等于 min-content，
+   而 canvas 的 min-content 是它的 width 属性（上千像素），会把一列撑满导致分栏失效。
+   overflow:hidden 把 min-content 归零，两栏才真正并排。 */
+.split2 > * { min-width: 0; overflow: hidden; }
+
+/* ---------------- 可视化 ---------------- */
+canvas { display: block; width: 100%; max-width: 100%; }
+
+/* ---------------- 表格 ---------------- */
+/* 表格容器。overflow-x 从 hidden 改成 auto：
+   账号页 6 列内容按 auto 布局后实测 651px，容器只有 602px，
+   原来横向裁掉的是最右边的「操作」列——那一列正好是唯一的交互列，
+   用户看到的按钮被切掉一半（截图里只剩「停」和半个箭头）。
+   改成可横向滚动，同时给表格一个内容下限宽度，保证列不被压扁。 */
+.table-wrap {
+  overflow-y: auto; overflow-x: auto; max-height: 460px;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+/* 内容下限宽 590：账号表 6 列固定宽度合计正好 550 + 末列 18 内边距，
+   留出余量给「昵称」列伸缩。设成 620 时表格比容器（实测 602）还宽 18px，
+   仍然会把最右边的操作列推出可视区，等于没修。 */
+table.grid {
+  width: 100%; min-width: 590px; border-collapse: collapse; font-size: 12px; table-layout: auto;
+}
+/* 列多且含长文本列的表格用固定布局：auto 下长文本列按内容撑宽，
+   总宽超过容器时最右侧（通常是操作列）被推出可视区。 */
+table.grid.grid-fixed { table-layout: fixed; }
+/* 列数多、值又短的表格收窄左右内边距，把宽度让给数值列 */
+table.grid.compact thead th, table.grid.compact tbody td { padding-left: 5px; padding-right: 5px; }
+table.grid.compact th:last-child, table.grid.compact td:last-child { padding-right: 10px; }
+table.grid thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--mid); color: var(--text2);
+  font-weight: 600; font-size: 11px; text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.grid tbody td {
+  padding: 7px 10px; border-bottom: 1px solid var(--line-light);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* 不再给 420px 上限：那个上限会让「能力」列吃掉全部余量，
+     把后面的操作列推到横向滚动区外。列宽交给表头 width 与内容自然宽度。 */
+}
+table.grid tbody tr:last-child td { border-bottom: 0; }
+table.grid tbody tr:hover td { background: var(--kd-color-state-hover); }
+table.grid tbody tr.selected td { background: var(--brand-light); color: var(--text); }
+/* 最后一列留出滚动条宽度的右内边距：否则垂直滚动条会把最右一列（通常是操作按钮）压掉一半 */
+table.grid th:last-child, table.grid td:last-child { padding-right: 18px; }
+td.mono, .mono { font-family: var(--mono); font-size: 11.5px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.selectable { user-select: text; }
+
+.tag {
+  display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+  background: var(--plate); color: var(--text2); line-height: 1.6;
+  white-space: nowrap;
+}
+.tag.ok { background: var(--ok-bg); color: var(--ok); }
+.tag.err { background: var(--err-bg); color: var(--err); }
+.tag.warn { background: var(--warn-bg); color: var(--warn); }
+.tag.brand { background: var(--brand-light); color: var(--brand); }
+
+/* ---------------- 表单 ---------------- */
+.btn {
+  height: 32px; padding: 0 15px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--plate); color: var(--text); font-family: var(--font); font-size: 13px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.btn:hover { background: var(--brand-light); border-color: transparent; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary { background: var(--brand); color: #fff; border-color: transparent; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--kd-color-state-hover); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.btn.danger:hover { background: var(--err-bg); color: var(--err); }
+
+input[type=text], input[type=password], input[type=number], select, textarea {
+  height: 32px; padding: 0 10px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--mid); color: var(--text);
+  font-family: var(--font); font-size: 13px; outline: none; min-width: 0;
+}
+textarea { height: auto; padding: 8px 10px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: var(--kd-focus-ring); }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 12px; color: var(--text2); }
+.field .desc { font-size: 11px; color: var(--text3); }
+
+/* 独立使用的说明文字（不在 .field 里时也要小一号）。
+   不加这条会退回 13px 正文字号，在一堆 11–12px 的标签中间显得像标题。 */
+.desc { font-size: 11.5px; color: var(--text3); line-height: 1.5; }
+
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch input { display: none; }
+.switch .track {
+  width: 36px; height: 20px; border-radius: 999px; background: var(--plate);
+  border: 1px solid var(--line); position: relative; transition: background 160ms ease;
+}
+.switch .track::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--text2);
+  transition: transform 160ms ease, background 160ms ease;
+}
+.switch input:checked + .track { background: var(--brand); border-color: transparent; }
+.switch input:checked + .track::after { transform: translateX(16px); background: #fff; }
+
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+
+/* ---------------- 日志 / 调用详情 ---------------- */
+.log-box {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.65;
+  background: var(--base); border-radius: var(--radius); padding: 10px 12px;
+  height: 100%; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  user-select: text;
+}
+.log-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 15px 10px; }
+.log-tab {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  background: var(--plate); color: var(--text2); border: 1px solid transparent;
+}
+.log-tab:hover { border-color: var(--line); }
+.log-tab.active { background: var(--brand-light); color: var(--brand); font-weight: 600; }
+
+/* ---------------- 弹窗 / Toast ---------------- */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.42); display: grid; place-items: center;
+  backdrop-filter: blur(2px);
+}
+/* 关键：CSS 的 display:grid 会覆盖 HTML 的 hidden 属性（后者只是 display:none），
+   不加这条规则，弹窗遮罩会一直挡在界面上（表现为整页模糊 + 一个空「提示」框）。 */
+.modal-mask[hidden] { display: none; }
+.modal {
+  width: min(520px, calc(100vw - 80px));
+  background: var(--top); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--kd-shadow-lg); display: flex; flex-direction: column;
+  max-height: calc(100vh - 120px);
+}
+.modal-head { padding: 15px 18px 8px; }
+.modal-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.modal-body { padding: 4px 18px 14px; overflow-y: auto; font-size: 13px; line-height: 1.6; }
+.modal-body pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.modal-foot { padding: 0 18px 16px; display: flex; justify-content: flex-end; gap: 8px; }
+
+.toast-stack { position: fixed; right: 18px; bottom: 18px; z-index: 1050; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  min-width: 220px; max-width: 420px; padding: 10px 14px; border-radius: 8px;
+  background: var(--top); border: 1px solid var(--line); box-shadow: var(--kd-shadow-md);
+  font-size: 12.5px; line-height: 1.5; animation: toastIn 180ms ease-out;
+}
+.toast.ok { border-left: 3px solid var(--ok); }
+.toast.err { border-left: 3px solid var(--err); }
+.toast.info { border-left: 3px solid var(--brand); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---------------- 空态 ---------------- */
+.empty {
+  display: grid; place-items: center; gap: 6px; padding: 28px 12px;
+  color: var(--text2); font-size: 12.5px; text-align: center;
+}
+.empty .big { font-size: 13px; color: var(--text); }
+/* 画布卡与「最近调用」共用的固定高度空态。三张卡并排时靠它对齐：
+   画布高度分别是 190 / 190 / 170，若各自由内容撑开就会参差。 */
+.canvas-empty {
+  height: 170px; padding: 0 12px;
+  /* 固定高度 + display:grid 的默认 align-content:stretch 会把两行文字拉开
+     撑到整块高度（标题在上沿、说明在下沿）。必须显式居中 + 行高按内容。 */
+  align-content: center; grid-auto-rows: min-content;
+}
+
+/* 模型池未拉取时的说明：紧贴按钮下方，不占整块空态 */
+.pool-hint {
+  margin: 10px 15px 0; padding: 8px 10px; border-radius: 7px;
+  background: var(--plate); color: var(--text2);
+  font-size: 11.5px; line-height: 1.5;
+}
+
+/* 首次启动引导条。
+   布局走「一步一行」而不是三列卡片：内容区实测只有 ~543 CSS px，
+   三列会把每列压到 ~160px，标题与说明必然折行（实测第三步被挤到第二行，
+   标题「把 Key 换上，客户端接入」断成两截），整条还高到把拓扑卡推出首屏。
+   行式每条 36px 高，三步加起来比原来的两行卡片还矮。 */
+.onb { border-color: var(--brand-light); }
+.onb-body { padding: 12px 15px 13px; }
+.onb-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+.onb-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.onb-steps { display: grid; gap: 6px; }
+.onb-step {
+  display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+  border: 1px solid var(--line-light); border-radius: 7px; background: var(--plate);
+}
+.onb-idx {
+  flex: 0 0 18px; width: 18px; height: 18px; line-height: 18px; text-align: center;
+  border-radius: 50%; background: var(--brand); color: #fff;
+  font-size: 10.5px; font-weight: 600; font-family: var(--mono);
+}
+.onb-title { flex: 0 0 118px; font-size: 12.5px; font-weight: 600; }
+.onb-desc {
+  flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.45; color: var(--text2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.onb-step .btn { flex: 0 0 auto; }
+
+/* 拓扑分支行（拓扑画布下方的图例） */
+.legend { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; font-size: 11.5px; color: var(--text2); }
+.legend i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+
+/* 容量分布环形图：提示框要相对卡片定位，.card-body 没有 position，
+   单独包一层定位容器。 */
+.cap-wrap { position: relative; }
+
+/* 图例行与环段联动高亮。负 margin 抵掉内边距，hover 不会把图例挤得跳行。 */
+.legend span[data-i] {
+  padding: 1px 4px; margin: -1px -4px; border-radius: 4px;
+  transition: background .12s, color .12s;
+}
+.legend span[data-i].hot { background: var(--brand-light); color: var(--text); }
+
+/* 跟随光标的悬浮提示。pointer-events:none 保证它不抢 mousemove。 */
+.cap-tip {
+  position: absolute; left: 0; top: 0; z-index: 6;
+  display: none; pointer-events: none;
+  padding: 6px 9px; border-radius: 7px;
+  background: var(--top); border: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .38);
+  color: var(--text); font-size: 11.5px; line-height: 1.5;
+  white-space: nowrap;
+}
+.cap-tip.on { display: block; }
+.cap-tip .tip-name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.cap-tip .tip-name i { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.cap-tip .tip-sub { color: var(--text2); font-family: var(--mono); font-size: 10.5px; }
+
+/* 智能路由候选链 —— 两行一条。
+   为什么不是单行：本机双栏时每栏只有 299 CSS px，序号 18 + 供应商 tag 66 +
+   三个操作按钮 62 已占 146，模型名只剩 ~115px，真实模型名
+   （deepseek-v4.1-flash / sn-deepseek-v4.1-flash-1017）必然截成「…-fla」，
+   看不出选的是哪个。第一行放身份与操作，模型名独占第二行整行宽度。 */
+.chain-item {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 10px; border-bottom: 1px solid var(--line-light);
+}
+.chain-item:hover { background: var(--kd-color-state-hover); }
+.chain-head { display: flex; align-items: center; gap: 6px; }
+.chain-idx {
+  width: 16px; text-align: center; font-family: var(--mono); font-size: 10.5px;
+  color: var(--text3); flex: 0 0 16px;
+}
+.chain-tag {
+  font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+  background: var(--plate); color: var(--text2); flex: 0 0 auto;
+  max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chain-head .chain-act { margin-left: auto; }
+.chain-model {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding-left: 22px;
+}
+.chain-act { display: flex; gap: 1px; flex: 0 0 auto; }
+.mini-btn {
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border: 0; background: transparent; color: var(--text2); cursor: pointer; border-radius: 4px;
+  font-size: 11.5px; padding: 0;
+}
+/* 带文字的 mini-btn（「查看」「全部」这类两字标签）必须按内容撑宽。
+   `width: 20px` 是给图标按钮定的，两字标签实测 scrollWidth 23 > clientWidth 20，
+   多出来的 3px 被裁掉一半笔画，看起来像渲染糊了。用 auto 宽度 + 两侧内边距兜住。 */
+.mini-btn.wide {
+  width: auto; min-width: 20px; padding: 0 5px; white-space: nowrap;
+}
+.mini-btn:hover { background: var(--kd-color-state-hover); color: var(--text); }
+.mini-btn.danger:hover { background: var(--err-bg); color: var(--err); }
+.mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* =====================================================================
+   语义类：把散落在 app.js 里的 inline style 收进来。
+   规则——凡是「同一个样式在 JS 里被写了两次以上」，就必须有对应的类。
+   这样改配色只改一处，也不必给每个元素都记一串 style.xxx = ...
+   ===================================================================== */
+
+/* ---- 布局工具 ---- */
+.pad-top { padding-top: 12px; }
+.flush { padding: 0; }
+.fill { min-height: 0; }
+.push-right { margin-left: auto; }
+.split-fill { flex: 1; min-height: 0; }
+
+/* 卡片内的一行（开关 + 状态 + 按钮）：允许折行，窄窗口不会把按钮挤出卡外 */
+.row-inline {
+  display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap; padding-top: 12px;
+}
+
+/* 表格行内操作按钮组：右对齐、无间隙，避免每次都在 JS 里设三种样式 */
+.row-ops { display: flex; gap: 2px; justify-content: flex-end; }
+
+/* 滚动列表：固定上限高度，超出滚动而不是把卡片撑出页面 */
+.scroll-420 { overflow-y: auto; max-height: 420px; }
+
+/* ---- 文本 / 状态 ---- */
+.cell-name { display: flex; align-items: center; gap: 8px; white-space: normal; }
+.cell-name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cell-muted { color: var(--text2); white-space: nowrap; }
+.text-err { color: var(--err); }
+
+/* 就地状态行：不弹窗也能回显结果，高度固定避免布局跳动 */
+.inline-status {
+  font-size: 11.5px; color: var(--text2); min-height: 16px;
+  line-height: 1.5;
+}
+.inline-status.ok { color: var(--ok); }
+.inline-status.warn { color: var(--warn); }
+.inline-status.err { color: var(--err); }
+.inline-status.muted { color: var(--text2); }
+
+/* 状态小胶囊：用于「运行中 / 已关闭」。原先这个类在 JS 里用了但样式没定义，
+   表现为一个纯文本标签（和旁边的说明文字混在一起看不出状态）。 */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  background: var(--plate); color: var(--text2); border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.pill::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text3);
+}
+.pill.on { color: var(--ok); border-color: transparent; background: var(--ok-bg); }
+.pill.on::before { background: var(--ok); }
+
+/* ---- 表单块 ---- */
+.pad-none { padding: 0; }
+.switch-grid {
+  margin-top: 16px; display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.action-row {
+  margin-top: 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+/* 参数表用更窄的下限：13 个字段挤在一屏，220px 会出现大量半空行 */
+.form-grid.narrow { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+/* ---- 弹窗内容 ---- */
+.mono-block {
+  margin-top: 10px; font-family: var(--mono); font-size: 11.5px;
+  white-space: pre-wrap; word-break: break-all; user-select: text;
+}
+.modal-summary { margin-bottom: 8px; }
+.result-row {
+  display: flex; gap: 10px; padding: 4px 0; font-size: 12px; align-items: baseline;
+}
+.result-name { flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.result-note { flex: 1; min-width: 0; color: var(--text2); }
+
+/* 键值表：调用详情页的头部摘要。两列固定宽度，值列自动换行 */
+.kv-grid {
+  display: grid; grid-template-columns: 76px 1fr; gap: 6px 12px;
+  font-size: 12.5px; margin-bottom: 12px;
+}
+.kv-key { color: var(--text2); }
+.kv-val { min-width: 0; word-break: break-all; }
+
+/* ---- 接入地址条 ---- */
+.url-bar {
+  padding: 11px 15px;
+  display: flex; align-items: center; gap: 12px;
+}
+.url-bar-label { font-size: 12px; color: var(--text2); flex: 0 0 auto; }
+.url-bar-value {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  user-select: text;
+}
+
+/* ---- 可点击表格行 ---- */
+table.grid tbody tr.clickable { cursor: pointer; }
+
+/* ---- 媒体实测页 ---- */
+/* 三个字段挤在一行：158px 下限才能在 543 CSS px 的内容区里排下三列 */
+.media-grid { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }
+.stack-12 { display: flex; flex-direction: column; gap: 12px; }
+.action-row.tight { margin-top: 0; }
+.media-gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.thumb {
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  line-height: 0;   /* 去掉 img 下方的基线空隙 */
+}
+.thumb img { display: block; max-width: 280px; max-height: 280px; }
+.transcript {
+  margin: 0; font-family: var(--mono); font-size: 12px;
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--base); border-radius: 6px; padding: 10px 12px;
+  min-height: 72px; color: var(--text);
+}
+.transcript.empty-text { color: var(--text3); }
+.hint-stack {
+  font-size: 11.5px; color: var(--text2);
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+/* ---- 策略页「运行现状」 ---- */
+.status-stack { display: flex; flex-direction: column; gap: 10px; }
+.status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.status-row.wrap { flex-wrap: wrap; }
+
+/* =====================================================================
+   表格列宽：从 HTML 的 <th style="width:..."> 移到样式表。
+   为什么值得移——列宽是这张表的「结构」，不是某一格的外观。
+   写在 id 选择器里，改一次调一处；写在每个 <th> 上，改列宽要逐页翻 JS 字符串。
+   ===================================================================== */
+
+/* 供应商：ID / 名称+操作 / 登录方式 / 账号 / 能力 */
+#tblProviders th:nth-child(1) { width: 78px; }
+#tblProviders th:nth-child(3) { width: 96px; }
+#tblProviders th:nth-child(4) { width: 64px; }
+
+/* 账号：供应商 / 昵称 / 余额 / 状态 / 说明 / 操作。
+   固定布局 + 显式列宽是必须的：说明列装的是上游原话（「上游返回的权益包
+   没有可解析的额度」之类），auto 布局下它按内容撑到 196px，把 6 列总宽顶到
+   651px > 容器 602px，最右侧唯一可交互的「操作」列正好被推出可视区。 */
+#tblAccounts { table-layout: fixed; }
+#tblAccounts th:nth-child(1) { width: 88px; }
+#tblAccounts th:nth-child(3) { width: 82px; }
+#tblAccounts th:nth-child(4) { width: 76px; }
+#tblAccounts th:nth-child(5) { width: 88px; }
+#tblAccounts th:nth-child(6) { width: 112px; }
+
+/* 客户端密钥：名称 / 密钥 / 状态 / 创建时间 / 操作 */
+#tblKeys th:nth-child(1) { width: 120px; }
+#tblKeys th:nth-child(3) { width: 64px; }
+#tblKeys th:nth-child(4) { width: 88px; }
+#tblKeys th:nth-child(5) { width: 96px; }
+
+/* 调用记录：8 列挤在 602px 里，默认 10px 左右内边距要吃掉 8×20=160px。
+   这张表全是短值（毫秒数、token 数、次数），列宽按「值本身要多宽」定，
+   余量全给模型列（长路由名 trae/deepseek-v4.1-flash）。 */
+#tblCalls { table-layout: fixed; }
+#tblCalls th:nth-child(1) { width: 72px; }
+#tblCalls th:nth-child(3) { width: 84px; }
+#tblCalls th:nth-child(4) { width: 58px; }
+#tblCalls th:nth-child(5) { width: 50px; }
+#tblCalls th:nth-child(6) { width: 66px; }
+#tblCalls th:nth-child(7) { width: 66px; }
+#tblCalls th:nth-child(8) { width: 36px; }
+
+/* 表头里的 .num：右对齐由类决定，不再逐列写 style="text-align:right" */
+table.grid thead th.num { text-align: right; }
+
+/* 说明列：上游原话，小一号 + 次要色，超长按省略号收尾（title 里有全文） */
+.cell-note {
+  color: var(--text2); font-size: 11px;
+  max-width: 0;   /* fixed 布局下靠列宽约束，这里只负责样式 */
+}
+td.num.gold { color: var(--gold); }
+
+/* 「最近调用」列表行。hover 整行提亮：行内容只有模型/tokens/耗时/状态，
+   完整明细（时间、供应商、首字延迟、输入输出拆分）在跟随光标的提示框里
+   （.cap-wrap 让 .cap-tip 相对本卡定位；背景/边框随行状态由 JS 写 inline）。 */
+.activity-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-light);
+  font-size: 12px;
+  transition: background .12s;
+}
+.activity-row:hover { background: var(--kd-color-state-hover, rgba(255,255,255,.04)); }
+.activity-box { position: relative; }
+
+/* 「最近错误」卡：时间 / 来源（供应商·实际模型）/ 错误摘要 / 状态。
+   错误摘要吃余量并截断（title 留全文），时间与来源是等宽固定段。 */
+.err-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid var(--line-light);
+  font-size: 11.5px;
+}
+.err-row:hover { background: var(--kd-color-state-hover, rgba(255,255,255,.04)); }
+.err-time { flex: 0 0 auto; color: var(--text2); white-space: nowrap; }
+.err-src { flex: 0 0 auto; color: var(--text); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err-msg {
+  flex: 1; min-width: 0; color: var(--err);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px;
+}
+
+/* 「供应商成功率」卡：名称 / 成功率横条 / 百分比 / 请求数与失败数。
+   横条底用 plate、填充按档位配色（≥90 绿 / ≥60 黄 / 其余红）。 */
+.ps-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 52px auto;
+  align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--line-light);
+  font-size: 11.5px;
+}
+.ps-row:hover { background: var(--kd-color-state-hover, rgba(255,255,255,.04)); }
+.ps-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-bar {
+  height: 6px; border-radius: 3px; background: var(--plate);
+  overflow: hidden; min-width: 40px;
+}
+.ps-bar i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .3s; }
+.ps-bar i.ok { background: var(--ok); }
+.ps-bar i.warn { background: var(--warn); }
+.ps-bar i.err { background: var(--err); }
+.ps-pct { text-align: right; color: var(--text); }
+.ps-nums { color: var(--text2); white-space: nowrap; font-size: 10.5px; }
+.activity-model {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.activity-meta { color: var(--text2); white-space: nowrap; }
+.activity-dur { color: var(--text2); white-space: nowrap; width: 64px; text-align: right; }
+
+/* =====================================================================
+   路由组页（第 12 页）
+   ===================================================================== */
+
+/* 组列表：组名 / 策略 / 成员 / 规则 / 状态 / 操作。
+   6 列挤在 602px。策略列必须给到 92px——它的值是「纯权重随机」5 个汉字
+   （约 60px 字宽 + 内边距），原来按「加权随机」4 字算的 62px 会截成「纯权重…」，
+   而这一列恰恰是用户判断组行为的关键。其余三列都是纯数字/胶囊，按值定死。 */
+#tblGroups { table-layout: fixed; }
+#tblGroups th:nth-child(2) { width: 92px; }
+#tblGroups th:nth-child(3) { width: 42px; }
+#tblGroups th:nth-child(4) { width: 42px; }
+/* 状态列 56px 只够装 3 字标签（「已停用」「无成员」）；真正的长值是
+   「全部失效」= 4 字 + 内边距 = 74px，实测被压出 18px 溢出（td 74>56）。
+   原来没暴露是因为巡检组恰好都有可用成员，走的是 3 字的 `2/2` 分支。
+   这里按最长真实值给 78px，把 18px 从「组名」列让出来（组名两行布局不吃宽）。 */
+#tblGroups th:nth-child(5) { width: 78px; }
+#tblGroups th:nth-child(6) { width: 74px; }
+
+/* 选中行沿用表格既有的 .selected（core 表格通用），这里只补一个左边条，
+   因为在「组列表 → 详情」的联动里，光靠底色用户看不出下面那块属于哪一行。 */
+#tblGroups tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--brand); }
+
+/* 组的对外 id（group/xxx）：客户端要填的就是这一串，必须能选中复制。
+   两行布局而不是单行——「group/media-hd」在 299px 双栏里会被省略号截成
+   「group/medi…」，端口那一类关键信息从来都是被截掉的那个。 */
+.route-id {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  user-select: text; word-break: break-all;
+}
+
+/* 成员 / 规则列表行：两行（首行是标签与操作，次行是模型名独占整行） */
+.rule-item {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 10px; border-bottom: 1px solid var(--line-light);
+}
+.rule-item:hover { background: var(--kd-color-state-hover); }
+.rule-head { display: flex; align-items: center; gap: 6px; }
+.rule-head .rule-act { margin-left: auto; display: flex; gap: 1px; flex: 0 0 auto; }
+.rule-detail {
+  font-size: 11px; color: var(--text2); padding-left: 22px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-target {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding-left: 22px;
+}
+
+/* 成员权重输入：宽度 58px。
+   46px 装不下 3 位数：`250` 会显示成「25」（不是被省略号截断，是数字本身被
+   数字输入框的 spinner 挤掉最后一位），用户会以为保存的是 25。
+   58px 能容下 4 位数 + spinner 留白。 */
+.weight-in {
+  width: 58px; height: 22px; padding: 0 4px; font-size: 11px;
+  font-family: var(--mono);
+}
+.member-line2 { display: flex; align-items: center; gap: 6px; padding-left: 22px; }
+.member-line2 .chain-model { padding-left: 0; flex: 1; min-width: 0; }
+
+/* 星期选择：7 个 20px 方块排一行（周一…周日）。
+   用 22px 而不是 28px——「周一」两个汉字在 22px 里刚好不截断，
+   7 个 + 间距 = 175px，加上时段输入仍在 520px 弹窗里排得下。 */
+.day-pick { display: flex; gap: 4px; flex-wrap: wrap; }
+.day-chip {
+  width: 22px; height: 22px; display: grid; place-items: center;
+  font-size: 10.5px; border-radius: 4px; cursor: pointer;
+  background: var(--plate); color: var(--text2); border: 1px solid transparent;
+  user-select: none;
+}
+.day-chip.on { background: var(--brand-light); color: var(--brand); font-weight: 600; }
+
+/* 规则弹窗里的「命中条件」分组标题 */
+.form-sub { font-size: 11px; color: var(--text3); margin: 10px 0 4px; }
+
+/* 语义小类：间距。原先这些在 JS 里以内联 style 写，本轮起统一收进样式表
+   （0.9.3 已经把内联样式清零，新页面守住同一条规矩）。 */
+.mt-10 { margin-top: 10px; }
+.mt-12 { margin-top: 12px; }
+
+/* 卡片的纵向堆叠（路由组页：组信息 / 成员 / 规则 三张卡自上而下） */
+.card-stack { display: flex; flex-direction: column; gap: 12px; }
+
+
+
+/* 自定义供应商条目：地址独占一行（长 URL 折行比截断有用，用户要能核对） */
+.custom-list { border-top: 1px solid var(--line-light); }
+.custom-item {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line-light);
+}
+.custom-item:hover { background: var(--kd-color-state-hover); }
+.custom-meta { display: flex; align-items: center; gap: 6px; padding-left: 2px; }
+.custom-name { font-size: 12px; color: var(--text); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.custom-pid {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  word-break: break-all; padding-left: 2px; line-height: 1.45;
+}
+.custom-url {
+  font-family: var(--mono); font-size: 11px; color: var(--text3);
+  word-break: break-all; padding-left: 2px; line-height: 1.45;
+}
+.custom-form { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+/* 「这页负责什么」说明条：智能路由 / 路由组两页视觉高度相似，
+   靠副标题解释不够，用一条窄条给出坐标 + 跳转入口，一眼分清。
+   brand 变体用于 auto（网关内建逻辑），中性色用于自建组。 */
+.scope-note {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--top);
+}
+.scope-note.brand {
+  border-left-color: var(--brand);
+  background: var(--brand-light);
+}
+.scope-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.scope-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.scope-desc { font-size: 11.5px; color: var(--text2); line-height: 1.55; }
+.scope-note .btn.sm { flex: none; align-self: center; white-space: nowrap; }
+
+/* 路由组表底部：内建 auto 组的情况说明（只读，带跳转） */
+.group-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 15px 11px;
+  border-top: 1px solid var(--line-light);
+}
+.group-foot .hint.wrap { flex: 1; min-width: 0; font-size: 11px;
+  color: var(--text2); line-height: 1.55; }
+
+/* 说明条里的不可断片段（`group/<组名>`、`model="auto"`）：
+   默认换行会在 `<` 后断开，把 `>` 甩到下一行行首，看着像乱码。 */
+.scope-desc .nowrap { white-space: nowrap; }
+
+/* 脚注里的「查看」按钮不能被 flex 压成竖排（「查」「看」各占一行）。 */
+.group-foot .mini-btn { flex: none; white-space: nowrap; }
+
+/* `hidden` 属性在 HTML 规范里只是「建议隐藏」，任何显式 display 都能顶掉它：
+   `.btn { display: inline-flex }` 就把 `hidden` 覆盖了。实测症状——强制态本该
+   只剩「立即更新」，结果「检查更新」和它并排显示。
+   `.btn[hidden]` 特异性 (0,2,0) 高于 `.btn` (0,1,0)，与书写顺序无关，比加 !important 安全。 */
+.btn[hidden] { display: none; }
+
+/* ---------------- 版本条（概览页） ---------------- */
+/* 布局约束：内容区仅 602 CSS px。左侧信息占满剩余宽度并允许收缩（min-width:0），
+   右侧按钮 flex:none 不参与压缩，否则窄窗口下「检查更新」会被压成竖排。 */
+.ver-card { flex: 0 0 auto; }
+.ver-body {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 15px;
+}
+.ver-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ver-line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ver-name { font-size: 12.5px; font-weight: 600; color: var(--text); flex: none; }
+.ver-cur {
+  font-size: 11.5px; color: var(--text2); flex: none;
+  user-select: text;
+}
+.ver-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--text2); background: var(--plate);
+  flex: none; white-space: nowrap;
+}
+.ver-badge.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+.ver-badge.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+.ver-badge.info { color: var(--brand); background: var(--brand-light); border-color: transparent; }
+.ver-badge.muted { color: var(--text3); }
+.ver-sub {
+  font-size: 11.5px; color: var(--text2); line-height: 1.5;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ver-actions { flex: none; display: flex; gap: 8px; align-items: center; }
+
+/* ---------------- 强制更新锁（盖住整页） ---------------- */
+/* 弹窗只挡视觉不挡操作：Esc、侧栏、Tab 焦点、键盘快捷键都能在"背后"改东西。
+   这层盖板 + `.shell` 的 inert 属性一起把操作面封死。
+   z-index 要低于 .modal-mask(1000) 但高于页面全部内容，弹窗才能浮在盖板之上。 */
+.gate-cover {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(1.5px);
+  cursor: not-allowed;
+  /* 盖板自身不接收鼠标事件转发，只吃掉所有点击 */
+  pointer-events: auto;
+}
+.gate-cover-tip {
+  position: absolute; left: 0; right: 0; bottom: 18px;
+  text-align: center; font-size: 11.5px; color: var(--text3);
+  pointer-events: none;
+}
+/* 锁定时连选中、拖拽、右键菜单一起关掉 */
+body.gate-locked { overscroll-behavior: none; }
+
+/* ---------------- 强制更新弹窗 ---------------- */
+.force-ver {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  font-size: 12.5px; color: var(--text2);
+}
+.force-arrow { color: var(--text3); }
+.force-ver .strong { color: var(--text); font-weight: 600; }
+.force-notes {
+  padding: 9px 11px; border-radius: 6px; margin-bottom: 10px;
+  background: var(--plate); border-left: 2px solid var(--brand);
+  font-size: 12px; line-height: 1.6; color: var(--text2);
+  user-select: text; word-break: break-word;
+}
+.force-tip { font-size: 12px; line-height: 1.6; color: var(--text2); }
+/* 文件名独占一行 + break-all：网盘里的包名较长，塞在段落里会被挤断成两截 */
+.force-file {
+  margin-top: 8px; font-size: 11.5px; color: var(--text3);
+  word-break: break-all; user-select: text;
+}

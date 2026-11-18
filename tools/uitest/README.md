@@ -1,0 +1,50 @@
+# 自检脚本（tools/uitest）
+
+这六支脚本是本项目「改完自己走一遍」的固定流程。全部用真实进程：真后端 +
+真 Chromium（headless + CDP）+ 真壳（WebView2），不是 mock。
+
+## 用法
+
+先起一个后端（测试用独立数据目录，别碰正式数据）：
+
+```bash
+# 项目根目录执行
+export JAVA_HOME=~/.workbuddy/binaries/jdk-21/jdk-21.0.3+9
+java -cp "server/build/install/aigw-server/lib/*" dev.aigw.server.MainKt \
+     --data "$(pwd)/.tmp/uitest/data" --no-browser &
+# 日志里会打印 UI 端口（默认目录 8792，派生目录 18xxx），下面用 <UI_PORT>
+```
+
+一键跑完五步：
+
+```bash
+sh tools/uitest/run_all.sh <UI_PORT>
+```
+
+或者分开跑：
+
+| 脚本 | 做什么 | 通过标准 |
+|---|---|---|
+| `api_probe.py <port>` | 75 个请求打全部 39 个端点：读、写、缺参、非法参、GET 打写接口、畸形 JSON、超大请求体 | 非 200 的必须是语义正确的 400/404/413，**不能有 500** |
+| `ui_walk.js <baseUrl> <out.json>` | 真 Chromium 打开页面，12 页逐页点完每个按钮/开关/tab/表格行；每步判断弹窗与 Toast 并关闭 | `exceptions: 0`、`consoleErrors: 0`、`overflow: []` |
+| `ui_groups_walk.js <baseUrl> <out.json>` | 路由组页的**深度**巡检：新建 → 空成员被拦 → 从模型目录加成员 → 改优先级 → 规则弹窗填全 7 类条件 → 保存 → 切页回来 → auto 只读 → 删除。通用巡检点不到编辑区（它是「点了组才出现」的） | 20 步全通、`exceptions: 0`、`overflow: 0`、`issues: []` |
+| `ui_custom_walk.js <baseUrl> <out.json>` | 供应商页「自定义供应商」区块的深度巡检：中文名派生短名 → 保存 → 列表显示规范化端点 → 编辑改名（账号搬过去）→ 拉模型（预期失败要给出可读原因）→ 删除二次确认。通用巡检点不到（表单是模态窗） | 13 步全通、`errors: []`、`overflow: 0` |
+| `stress.py <port>` | keep-alive 复用连接 60 轮 × 5 请求、10 线程 × 20 并发写、41MB 请求体、畸形请求 | 全 PASS，且压力后服务仍可响应 |
+| 壳自测 | `shell/out/release/AiGatewayWeb.exe --selftest <out.txt>` | `12 / 12 passed`（命中判定表，含最大化态与按钮区） |
+
+## 为什么这些必须自动化
+
+- **窗口交互**：这台开发机没有交互桌面（`GetForegroundWindow()==0`、光标恒 `(0,0)`），
+  外部的 Robot / 鼠标注入全部无效。能验的只有纯函数（命中判定 → `--selftest`）
+  和进程内触发的路径（`--dragtest` / `--screenshot`）。
+- **偶发 400**：静态资源曾经走 chunked，连接复用时残留字节会被下一个请求
+  当成新的请求行。单发几次 curl 永远测不出来，必须「同一连接连发几十次」。
+- **空数据目录**：全新安装是另一条代码路径（首次引导条、0 账号、
+  无 `.instance.json`）。只测有数据的目录会漏掉这条。
+
+## 截图
+
+`AI Gateway.exe --screenshot <png> --page <key> --quit` 用
+`CapturePreviewAsync` 导出**真实渲染像素**。
+不要用屏幕 BitBlt / PrintWindow：Chromium 是 GPU 合成、不走 GDI，
+截出来是空白或别的内容（本项目为此浪费过两轮排查）。
