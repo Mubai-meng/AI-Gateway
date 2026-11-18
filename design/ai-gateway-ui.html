@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      tailwind = { config: { corePlugins: { preflight: false } } };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      *, ::before, ::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      data-pencil-name="AI Gateway · Windows"
+      class="box-border w-[1280px] h-[800px] flex flex-col gap-0 justify-start items-start bg-[#101318] rounded-[16px] overflow-hidden"
+    >
+      <div
+        data-pencil-name="Title bar"
+        class="box-border w-full h-[48px] shrink-0 flex flex-row gap-[10px] p-[0px_18px] justify-start items-center bg-[#171B22]"
+      >
+        <div
+          data-pencil-name="Running dot"
+          class="box-border w-[9px] shrink-0 h-[9px] bg-[#35C08A] rounded-full"
+        ></div>
+        <div
+          data-pencil-name="App title"
+          class="text-[14px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+        >
+          AI Gateway
+        </div>
+        <div
+          data-pencil-name="Version"
+          class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+        >
+          Windows · 0.3.0
+        </div>
+        <div
+          data-pencil-name="Title spacer"
+          class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+        ></div>
+        <div
+          data-pencil-name="Encrypted badge"
+          class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+        >
+          凭证已加密
+        </div>
+      </div>
+      <div
+        data-pencil-name="Body"
+        class="box-border w-full [flex:1_1_0] flex flex-row gap-0 justify-start items-start"
+      >
+        <div
+          data-pencil-name="Sidebar"
+          class="box-border w-[210px] shrink-0 h-full flex flex-col gap-[3px] p-[18px_12px] justify-start items-start bg-[#141820]"
+        >
+          <div
+            data-pencil-name="Section workspace"
+            class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+          >
+            工作台
+          </div>
+          <div
+            data-pencil-name="Nav overview"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#22314F] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav overview label"
+              class="text-[13px]/[normal] box-border text-[#4C8DFF] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+            >
+              概览
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav providers"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav providers label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              供应商
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav accounts"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav accounts label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              账号
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav models"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav models label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              模型目录
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav gap"
+            class="box-border w-[1px] h-[16px] shrink-0 flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+          ></div>
+          <div
+            data-pencil-name="Section config"
+            class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+          >
+            配置
+          </div>
+          <div
+            data-pencil-name="Nav keys"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav keys label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              客户端密钥
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav advanced"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav advanced label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              高级设置
+            </div>
+          </div>
+          <div
+            data-pencil-name="Nav logs"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-0 p-[0px_12px] justify-start items-center bg-[#00000000] rounded-[8px]"
+          >
+            <div
+              data-pencil-name="Nav logs label"
+              class="text-[13px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              运行日志
+            </div>
+          </div>
+          <div
+            data-pencil-name="Sidebar spacer"
+            class="box-border w-[1px] [flex:1_1_0] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+          ></div>
+        </div>
+        <div
+          data-pencil-name="Main content"
+          class="box-border [flex:1_1_0] h-full flex flex-col gap-[16px] p-[20px_24px] justify-start items-start bg-[#101318]"
+        >
+          <div
+            data-pencil-name="Page header"
+            class="box-border w-full h-[44px] shrink-0 flex flex-row gap-[10px] justify-start items-center"
+          >
+            <div
+              data-pencil-name="Header titles"
+              class="box-border w-fit shrink-0 h-fit flex flex-col gap-[2px] justify-start items-start"
+            >
+              <div
+                data-pencil-name="Page title"
+                class="text-[18px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                概览
+              </div>
+              <div
+                data-pencil-name="Page subtitle"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                本地网关 · 127.0.0.1:8790
+              </div>
+            </div>
+            <div
+              data-pencil-name="Header spacer"
+              class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+            ></div>
+            <div
+              data-pencil-name="Status pill"
+              class="box-border w-[76px] shrink-0 h-[26px] flex flex-row gap-0 justify-center items-center bg-[#12352B] rounded-[13px]"
+            >
+              <div
+                data-pencil-name="Status text"
+                class="text-[11px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                运行中
+              </div>
+            </div>
+            <div
+              data-pencil-name="Stop button"
+              class="box-border w-[130px] shrink-0 h-[34px] flex flex-row gap-0 justify-center items-center bg-[#1B2029] [border:1px_solid_#2A303C] rounded-[8px]"
+            >
+              <div
+                data-pencil-name="Stop button label"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                停止网关
+              </div>
+            </div>
+          </div>
+          <div
+            data-pencil-name="Metrics"
+            class="box-border w-full h-fit shrink-0 flex flex-row gap-[10px] justify-between items-start"
+          >
+            <div
+              data-pencil-name="Metric accounts"
+              class="box-border w-[230px] shrink-0 h-[80px] flex flex-col gap-[6px] p-[14px_16px] justify-start items-start bg-[#1B2029] rounded-[12px]"
+            >
+              <div
+                data-pencil-name="Metric accounts label"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                可用账号
+              </div>
+              <div
+                data-pencil-name="Metric accounts value"
+                class="text-[26px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                1
+              </div>
+            </div>
+            <div
+              data-pencil-name="Metric requests"
+              class="box-border w-[230px] shrink-0 h-[80px] flex flex-col gap-[6px] p-[14px_16px] justify-start items-start bg-[#1B2029] rounded-[12px]"
+            >
+              <div
+                data-pencil-name="Metric requests label"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                今日请求
+              </div>
+              <div
+                data-pencil-name="Metric requests value"
+                class="text-[26px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                4
+              </div>
+            </div>
+            <div
+              data-pencil-name="Metric models"
+              class="box-border w-[230px] shrink-0 h-[80px] flex flex-col gap-[6px] p-[14px_16px] justify-start items-start bg-[#1B2029] rounded-[12px]"
+            >
+              <div
+                data-pencil-name="Metric models label"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                模型数
+              </div>
+              <div
+                data-pencil-name="Metric models value"
+                class="text-[26px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                49
+              </div>
+            </div>
+            <div
+              data-pencil-name="Metric credits"
+              class="box-border w-[230px] shrink-0 h-[80px] flex flex-col gap-[6px] p-[14px_16px] justify-start items-start bg-[#1B2029] rounded-[12px]"
+            >
+              <div
+                data-pencil-name="Metric credits label"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                剩余额度
+              </div>
+              <div
+                data-pencil-name="Metric credits value"
+                class="text-[26px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                2300
+              </div>
+            </div>
+          </div>
+          <div
+            data-pencil-name="Base URL bar"
+            class="box-border w-full h-[44px] shrink-0 flex flex-row gap-[12px] p-[0px_14px] justify-start items-center bg-[#1B2029] rounded-[10px]"
+          >
+            <div
+              data-pencil-name="Url label"
+              class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              接入地址
+            </div>
+            <div
+              data-pencil-name="Url value"
+              class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              http://127.0.0.1:8790/v1
+            </div>
+            <div
+              data-pencil-name="Url spacer"
+              class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+            ></div>
+            <div
+              data-pencil-name="Copy button"
+              class="box-border w-[130px] shrink-0 h-[34px] flex flex-row gap-0 justify-center items-center bg-[#1B2029] [border:1px_solid_#2A303C] rounded-[8px]"
+            >
+              <div
+                data-pencil-name="Copy button label"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                复制
+              </div>
+            </div>
+          </div>
+          <div
+            data-pencil-name="Providers card"
+            class="box-border w-full h-fit shrink-0 flex flex-col gap-0 justify-start items-start bg-[#1B2029] rounded-[12px]"
+          >
+            <div
+              data-pencil-name="Providers header"
+              class="box-border w-full h-[42px] shrink-0 flex flex-row gap-0 p-[0px_14px] justify-start items-center"
+            >
+              <div
+                data-pencil-name="Providers title"
+                class="text-[14px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                供应商
+              </div>
+              <div
+                data-pencil-name="Providers header spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Providers count"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                6 家
+              </div>
+            </div>
+            <div
+              data-pencil-name="Divider 1"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Provider trae"
+              class="box-border w-full h-[44px] shrink-0 flex flex-row gap-[10px] p-[0px_14px] justify-start items-center bg-[#00000000]"
+            >
+              <div
+                data-pencil-name="Provider trae dot"
+                class="box-border w-[8px] shrink-0 h-[8px] bg-[#35C08A] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Provider trae name"
+                class="text-[13px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                Trae
+              </div>
+              <div
+                data-pencil-name="Provider trae spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Provider trae detail"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                图图 · 2300
+              </div>
+              <div
+                data-pencil-name="Provider trae status"
+                class="text-[12px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                已连接
+              </div>
+            </div>
+            <div
+              data-pencil-name="Divider 2"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Provider codebuddy"
+              class="box-border w-full h-[44px] shrink-0 flex flex-row gap-[10px] p-[0px_14px] justify-start items-center bg-[#00000000]"
+            >
+              <div
+                data-pencil-name="Provider codebuddy dot"
+                class="box-border w-[8px] shrink-0 h-[8px] bg-[#E0A33A] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Provider codebuddy name"
+                class="text-[13px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                WorkBuddy
+              </div>
+              <div
+                data-pencil-name="Provider codebuddy spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Provider codebuddy detail"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                设备码
+              </div>
+              <div
+                data-pencil-name="Provider codebuddy status"
+                class="text-[12px]/[normal] box-border text-[#E0A33A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                待授权
+              </div>
+            </div>
+            <div
+              data-pencil-name="Divider 3"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Provider antigravity"
+              class="box-border w-full h-[44px] shrink-0 flex flex-row gap-[10px] p-[0px_14px] justify-start items-center bg-[#00000000]"
+            >
+              <div
+                data-pencil-name="Provider antigravity dot"
+                class="box-border w-[8px] shrink-0 h-[8px] bg-[#5C6472] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Provider antigravity name"
+                class="text-[13px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                Antigravity
+              </div>
+              <div
+                data-pencil-name="Provider antigravity spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Provider antigravity detail"
+                class="text-[12px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                OAuth
+              </div>
+              <div
+                data-pencil-name="Provider antigravity status"
+                class="text-[12px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                未登录
+              </div>
+            </div>
+          </div>
+          <div
+            data-pencil-name="Actions"
+            class="box-border w-full h-[34px] shrink-0 flex flex-row gap-[8px] justify-start items-center"
+          >
+            <div
+              data-pencil-name="Login button"
+              class="box-border w-[130px] shrink-0 h-[34px] flex flex-row gap-0 justify-center items-center bg-[#4C8DFF] rounded-[8px]"
+            >
+              <div
+                data-pencil-name="Login button label"
+                class="text-[12px]/[normal] box-border text-[#FFFFFF] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                登录供应商
+              </div>
+            </div>
+            <div
+              data-pencil-name="Models button"
+              class="box-border w-[130px] shrink-0 h-[34px] flex flex-row gap-0 justify-center items-center bg-[#1B2029] [border:1px_solid_#2A303C] rounded-[8px]"
+            >
+              <div
+                data-pencil-name="Models button label"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                拉取模型目录
+              </div>
+            </div>
+            <div
+              data-pencil-name="Actions spacer"
+              class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+            ></div>
+            <div
+              data-pencil-name="Updated"
+              class="text-[11px]/[normal] box-border text-[#5C6472] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+            >
+              3 秒前更新
+            </div>
+          </div>
+          <div
+            data-pencil-name="Recent calls card"
+            class="box-border w-full [flex:1_1_0] flex flex-col gap-0 justify-start items-start bg-[#1B2029] rounded-[12px]"
+          >
+            <div
+              data-pencil-name="Activity header"
+              class="box-border w-full h-[42px] shrink-0 flex flex-row gap-0 p-[0px_14px] justify-start items-center"
+            >
+              <div
+                data-pencil-name="Activity title"
+                class="text-[14px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+              >
+                最近调用
+              </div>
+              <div
+                data-pencil-name="Activity header spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Activity hint"
+                class="text-[11px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                今日 4 次 · 全部成功
+              </div>
+            </div>
+            <div
+              data-pencil-name="Activity divider 1"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Log 1"
+              class="box-border w-full h-[38px] shrink-0 flex flex-row gap-[12px] p-[0px_14px] justify-start items-center"
+            >
+              <div
+                data-pencil-name="Log 1 dot"
+                class="box-border w-[6px] shrink-0 h-[6px] bg-[#35C08A] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Log 1 model"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                trae-cn/Doubao-Seed-2.1-Turbo
+              </div>
+              <div
+                data-pencil-name="Log 1 spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Log 1 tokens"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                74 tokens
+              </div>
+              <div
+                data-pencil-name="Log 1 latency"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                772 ms
+              </div>
+              <div
+                data-pencil-name="Log 1 status"
+                class="text-[11px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                成功
+              </div>
+            </div>
+            <div
+              data-pencil-name="Activity divider 2"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Log 2"
+              class="box-border w-full h-[38px] shrink-0 flex flex-row gap-[12px] p-[0px_14px] justify-start items-center"
+            >
+              <div
+                data-pencil-name="Log 2 dot"
+                class="box-border w-[6px] shrink-0 h-[6px] bg-[#35C08A] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Log 2 model"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                trae-cn/Doubao-Seed-2.1-Turbo
+              </div>
+              <div
+                data-pencil-name="Log 2 spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Log 2 tokens"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                170 tokens
+              </div>
+              <div
+                data-pencil-name="Log 2 latency"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                1.2 s
+              </div>
+              <div
+                data-pencil-name="Log 2 status"
+                class="text-[11px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                成功
+              </div>
+            </div>
+            <div
+              data-pencil-name="Activity divider 3"
+              class="box-border w-full h-[1px] shrink-0 bg-[#2A303C]"
+            ></div>
+            <div
+              data-pencil-name="Log 3"
+              class="box-border w-full h-[38px] shrink-0 flex flex-row gap-[12px] p-[0px_14px] justify-start items-center"
+            >
+              <div
+                data-pencil-name="Log 3 dot"
+                class="box-border w-[6px] shrink-0 h-[6px] bg-[#35C08A] rounded-full"
+              ></div>
+              <div
+                data-pencil-name="Log 3 model"
+                class="text-[12px]/[normal] box-border text-[#E8ECF2] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                trae-cn/Doubao-Seed-2.1-Turbo
+              </div>
+              <div
+                data-pencil-name="Log 3 spacer"
+                class="box-border [flex:1_1_0] h-[1px] flex flex-row gap-0 justify-start items-start bg-[#00000000]"
+              ></div>
+              <div
+                data-pencil-name="Log 3 tokens"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                52 tokens
+              </div>
+              <div
+                data-pencil-name="Log 3 latency"
+                class="text-[11px]/[normal] box-border text-[#8A93A3] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                640 ms
+              </div>
+              <div
+                data-pencil-name="Log 3 status"
+                class="text-[11px]/[normal] box-border text-[#35C08A] font-['Segoe_UI',system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+              >
+                成功
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

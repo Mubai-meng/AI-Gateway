@@ -1,0 +1,13 @@
+[selftest] edge-left          got= 10 want= 10 PASS
+[selftest] edge-right         got= 11 want= 11 PASS
+[selftest] edge-top           got= 12 want= 12 PASS
+[selftest] edge-bottom        got= 15 want= 15 PASS
+[selftest] corner-topleft     got= 13 want= 13 PASS
+[selftest] corner-topright    got= 14 want= 14 PASS
+[selftest] corner-botleft     got= 16 want= 16 PASS
+[selftest] corner-botright    got= 17 want= 17 PASS
+[selftest] content-center     got=  1 want=  1 PASS
+[selftest] titlebar-band      got=  2 want=  2 PASS
+[selftest] button-zone        got=  1 want=  1 PASS
+[selftest] maximized          top=12(want12) bottom=1(want1) title=2(want2) PASS
+[selftest] 12 / 12 passed

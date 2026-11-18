@@ -1,0 +1,146 @@
+/**
+ * KDesign 已有页面 Override 模板
+ * 复制为项目 kd-overrides.css，按选择器修改。
+ * 原则：成组覆盖（height + padding + flex + line-height），不改 HTML 结构。
+ * 依赖：先引入 references/kd-design-system.css
+ */
+
+/* —— 页面根 —— */
+body {
+  font-family: var(--kd-font-family);
+  color: var(--kd-color-text-primary);
+  background: var(--kd-app-canvas);
+}
+
+/* —— 按钮（成组：flex + 固定高度 + 不对称 padding） —— */
+.btn,
+button.primary,
+button.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--kd-space-100);
+  min-height: var(--kd-btn-height-lg);
+  height: var(--kd-btn-height-lg);
+  padding: var(--kd-btn-padding-y) var(--kd-btn-padding-x-end) var(--kd-btn-padding-y) var(--kd-btn-padding-x);
+  border-radius: var(--kd-btn-radius);
+  font-size: var(--kd-btn-font-size);
+  font-weight: var(--kd-btn-font-weight);
+  line-height: 1.5715;
+  transition: background var(--kd-transition), border-color var(--kd-transition), color var(--kd-transition);
+}
+
+.btn-sm,
+button.small {
+  min-height: var(--kd-btn-height-sm);
+  height: var(--kd-btn-height-sm);
+  font-size: var(--kd-btn-font-size-sm);
+}
+
+.btn-primary,
+button.primary {
+  background: var(--kd-color-public-normal);
+  color: var(--kd-color-white);
+  border: none;
+}
+
+.btn-primary:hover,
+button.primary:hover {
+  background: var(--kd-color-public-hover);
+}
+
+.btn-secondary,
+button.secondary {
+  background: var(--kd-color-background-plate);
+  color: var(--kd-color-text-secondary);
+  border: 1px solid var(--kd-color-line-regular);
+}
+
+/* —— 输入框 / 选择器 —— */
+input[type="text"],
+input[type="search"],
+select,
+.text-input {
+  min-height: var(--kd-input-height);
+  border-radius: var(--kd-input-radius);
+  font-size: var(--kd-font-size-base);
+  border-color: var(--kd-color-line-regular);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--kd-color-public-normal);
+  box-shadow: var(--kd-focus-ring);
+}
+
+/* —— 卡片 / 面板（只改表面，不改内部 grid） —— */
+.card,
+.panel,
+.table-container {
+  border-radius: var(--kd-border-radius-200);
+  border-color: var(--kd-color-line-regular);
+  box-shadow: var(--kd-shadow-sm);
+}
+
+/* —— 表格（th/td padding 成对） —— */
+table th {
+  font-size: var(--kd-font-size-small);
+  padding: var(--kd-space-300) var(--kd-space-200);
+  background: var(--kd-color-background-plate);
+  color: var(--kd-color-text-secondary);
+  border-bottom: 1px solid var(--kd-color-line-regular);
+}
+
+table td {
+  font-size: var(--kd-font-size-sub-base, 13px);
+  padding: var(--kd-space-300) var(--kd-space-200);
+  border-bottom: 1px solid var(--kd-color-line-light);
+}
+
+table tbody tr:hover {
+  background: var(--kd-color-state-hover);
+}
+
+/* —— 弹窗 —— */
+.modal,
+.dialog {
+  border-radius: var(--kd-border-radius-300);
+  box-shadow: var(--kd-shadow-lg);
+}
+
+.modal-title,
+.dialog h2 {
+  font-size: var(--kd-font-size-middle);
+  font-weight: var(--kd-btn-font-weight);
+  color: var(--kd-color-text-primary);
+}
+
+.modal-footer,
+.dialog-footer {
+  background: var(--kd-color-background-plate);
+  border-top: 1px solid var(--kd-color-line-regular);
+}
+
+/* —— 侧栏导航项 —— */
+.nav-item,
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: var(--kd-space-200);
+  border-radius: var(--kd-border-radius-200);
+  font-size: var(--kd-font-size-base);
+}
+
+.nav-item.active,
+.sidebar-item.active {
+  background: var(--kd-color-public-light);
+  color: var(--kd-color-public-normal);
+  font-weight: var(--font-bold, 600);
+}
+
+/* —— 深色（可选；变量由 kd-design-system.css 自动覆盖） —— */
+[data-kd-theme="dark"] body,
+.kd-dark body {
+  /* 画布/文字已随 --kd-app-canvas、--kd-color-text-primary 切换 */
+}

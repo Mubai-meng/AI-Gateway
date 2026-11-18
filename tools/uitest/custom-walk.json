@@ -1,0 +1,24 @@
+{
+  "steps": [
+    "切到供应商页：供应商 / 新区块就绪：true",
+    "列表形态：已有 0 条 / 空态=true",
+    "打开表单：添加自定义供应商",
+    "名称「探针 中转」→ 短名自动派生：relay1",
+    "保存后列表条目数：1（前 0）",
+    "列表显示的 provider id：custom:relay1 / 实际端点：https://api.probe.test/v1/chat/completions",
+    "列表显示的实际端点：https://api.probe.test/v1/chat/completions",
+    "服务端读回：{\"key\":\"relay1\",\"registered\":true,\"baseUrl\":\"https://api.probe.test/v1\",\"models\":[\"probe-model-a\",\"probe-model-b\"],\"accounts\":0}",
+    "打开编辑：编辑 探针 中转",
+    "改名后 keys：[\"probe-renamed\"]",
+    "拉模型结果：拉取失败：api.probe.test",
+    "删除确认框：删除自定义供应商",
+    "删除后服务端 items：0 []"
+  ],
+  "errors": [],
+  "fatal": null,
+  "overflow": [],
+  "bodyW": 1042,
+  "bodyScrollW": 1042,
+  "exceptions": [],
+  "consoleErrors": []
+}

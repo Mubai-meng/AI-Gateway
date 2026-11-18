@@ -1,0 +1,37 @@
+# ---- 构建产物（可用 build-web.ps1 / gradlew 重新生成） ----
+build/
+*/build/
+out/
+shell/out/
+release-web/
+installer/
+
+# ---- Gradle / Kotlin 缓存 ----
+.gradle/
+.kotlin/
+*.hprof
+
+# ---- 本地运行时数据：含密钥、账号凭据、调用日志，绝不能提交 ----
+.data/
+.update-cache.json
+.update-gate.json
+.instance.json
+.instance.lock
+antigravity-oauth.json
+
+# ---- 临时与备份 ----
+.tmp/
+core-backup-*/
+*.bak
+*.orig
+
+# ---- WebView2 SDK 下载缓存（dll 保留，编译外壳需要引用） ----
+shell/lib/*.zip
+
+# ---- 系统与编辑器 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+*.iml
+.vscode/
