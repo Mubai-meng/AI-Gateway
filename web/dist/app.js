@@ -3750,6 +3750,11 @@ function renderGateway() {
     numInput(settings.maxRotate, 3, 0, 20));
   const retentionIn = field('调用记录保留天数', '超期记录每日自动清理',
     numInput(settings.logRetentionDays, 30, 1, 3650));
+  // CORS 白名单：留空沿用旧的 `*`，填了只对命中的 Origin 回显。
+  // 局域网暴露时这一项是「同网段任意网页都能带你的额度发请求」的唯一闸门，
+  // 所以说明里必须写清「填了会发生什么」，不能只写「允许来源」。
+  const corsIn = field('CORS 允许来源', '留空回 *（任意网页可用）；填了只放行名单内的 Origin',
+    textInput(settings.corsAllowedOrigins || '', 'https://app.example.com,http://localhost:5173'));
 
   cb.appendChild(grid);
 
@@ -3795,6 +3800,7 @@ function renderGateway() {
       defaultProvider: providerIn.value,
       maxRotate: toIntOr(rotateIn.value, 3),
       logRetentionDays: toIntOr(retentionIn.value, 30),
+      corsAllowedOrigins: corsIn.value.trim(),
       allowNoKey: allowNoKey.checked,
       exposeLan: exposeLan.checked,
       onlyUsableModels: onlyUsable.checked,

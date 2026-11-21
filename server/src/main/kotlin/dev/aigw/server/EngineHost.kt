@@ -458,6 +458,8 @@ class EngineHost(val dataDir: File) {
             addProperty("apiKey", cfg.apiKey)
             addProperty("allowNoKey", cfg.allowNoKey)
             addProperty("exposeLan", cfg.exposeLan)
+            // [aigw-patch] 上游 v2.38.0 起的 CORS 白名单：空=`,*` 旧行为，填了只回显命中的 Origin
+            addProperty("corsAllowedOrigins", cfg.corsAllowedOrigins)
             addProperty("onlyUsableModels", cfg.onlyUsableModels)
             addProperty("verboseLogging", cfg.verboseLogging)
             addProperty("logRetentionDays", cfg.logRetentionDays)

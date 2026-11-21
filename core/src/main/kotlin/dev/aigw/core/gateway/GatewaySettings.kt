@@ -23,6 +23,14 @@ data class GatewaySettings(
      * 仅当字段缺失（老版本升级/首次运行）时才落到这个新默认。
      */
     val exposeLan: Boolean = false,
+    /**
+     * CORS 允许的来源白名单（逗号分隔的完整来源，如 `https://app.example.com`）。
+     *
+     * 为空表示沿用旧行为（`*`），只为不破坏已经在用的浏览器端客户端。
+     * 一旦填写，就只对命中名单的 Origin 回显它自己，其余一律不回 CORS 头——
+     * 局域网暴露时「任意网页都能带着你的额度发请求」正是靠这个堵住。
+     */
+    val corsAllowedOrigins: String = "",
     /** 「只看可用模型」开关：隐藏上游的非对话内部条目。 */
     val onlyUsableModels: Boolean = false,
     /** token 预刷新窗口（秒）：临期多久内才刷新。 */
@@ -45,6 +53,7 @@ data class GatewaySettings(
         addProperty("apiKey", apiKey)
         addProperty("allowNoKey", allowNoKey)
         addProperty("exposeLan", exposeLan)
+        addProperty("corsAllowedOrigins", corsAllowedOrigins)
         addProperty("onlyUsableModels", onlyUsableModels)
         addProperty("refreshSkewSeconds", refreshSkewSeconds)
         addProperty("maxRotate", maxRotate)
@@ -87,6 +96,7 @@ data class GatewaySettings(
                 apiKey = obj.strOr("apiKey", defaults.apiKey),
                 allowNoKey = obj.boolOr("allowNoKey", defaults.allowNoKey),
                 exposeLan = obj.boolOr("exposeLan", defaults.exposeLan),
+                corsAllowedOrigins = obj.strOr("corsAllowedOrigins", defaults.corsAllowedOrigins),
                 onlyUsableModels = obj.boolOr("onlyUsableModels", defaults.onlyUsableModels),
                 refreshSkewSeconds = clampRefreshSkew(obj.longOr("refreshSkewSeconds", defaults.refreshSkewSeconds)),
                 maxRotate = obj.intOr("maxRotate", defaults.maxRotate),
@@ -160,12 +170,13 @@ data class CustomProviderConfig(
      * 名字规律各家不同（`gpt-image-1`、`dall-e-3`、`flux-pro`、`seedream-3`…），
      * 猜错的结果是把文本模型塞给图像端点，上游回一句「不支持的模型」，用户看不出是我们选错了。
      * 用户填了才认为支持，符合「宁可报没能力，也不凭空编造」的既有口径。
+     * [aigw-patch]
      */
     val imageModels: List<String> = emptyList(),
 ) {
     val providerId: String get() = "custom:$key"
 
-    /** 是否声明了出图能力（[imageModels] 非空即视为支持）。 */
+    /** 是否声明了出图能力（[imageModels] 非空即视为支持）。[aigw-patch] */
     val supportsImage: Boolean get() = imageModels.any { it.isNotBlank() }
 
     fun toJson(): JsonObject = JsonObject().apply {
@@ -188,6 +199,7 @@ data class CustomProviderConfig(
             if (key.isEmpty() || baseUrl.isEmpty()) return null
             val keys = obj.arrayOrNull("apiKeys")?.mapNotNull { it.asString } ?: emptyList()
             val models = obj.arrayOrNull("models")?.mapNotNull { it.asString } ?: emptyList()
+            // [aigw-patch] 图像模型：缺字段即空（升级前行为不变）
             val imageModels = obj.arrayOrNull("imageModels")?.mapNotNull { it.asString } ?: emptyList()
             return CustomProviderConfig(
                 key = key,

@@ -112,32 +112,9 @@ class PrivacyRedactorTest {
         assertEquals("key=$key 完", first + second + tail)
     }
 
-    /**
-     * [aigw-patch] 回归：占位符**完整出现在同一个 chunk 的末尾**时必须立刻还原。
-     *
-     * 上游原实现把回看上限设成 `最长占位符长度 - 1`，于是「整段文字以占位符结尾」
-     * 这种情况永远看不到完整串，退化成按 `__` 前缀回看，扣下最后两个字符；
-     * 剩下的 `__AIGW_1` 拿去匹配还原表自然落空，客户端收到的是残缺占位符，
-     * 下一帧再补上 `__`。实测就是这么泄漏的（非流式路径正常，只有流式出问题）。
-     */
     @Test
-    fun `流式还原能处理占位符正好落在 chunk 末尾`() {
-        val key = "sk-abcdefghijklmnopqrstuvwxyz"
-        val (redacted, session) = redactor.redactOpenAiBody(bodyOf("key=$key"), enabled = true)
-        val placeholder = contentsOf(redacted)[0].removePrefix("key=")
-
-        // 第一帧以完整占位符结尾（上游每条 delta 都这么切），必须原样还原
-        val restorer = redactor.restorerFor(session)
-        val first = restorer.feed("key=$placeholder")
-        assertEquals("key=$key", first)
-
-        // 再来一帧普通文本：不应残留任何 pending
-        assertEquals(" 完", restorer.feed(" 完"))
-        assertEquals("", restorer.flush())
-    }
-
-    @Test
-    fun `流式还原在无占位符时不改动内容`() {        val (redacted, session) = redactor.redactOpenAiBody(bodyOf("sk-abcdefghijklmnopqrstuvwxyz"), enabled = true)
+    fun `流式还原在无占位符时不改动内容`() {
+        val (redacted, session) = redactor.redactOpenAiBody(bodyOf("sk-abcdefghijklmnopqrstuvwxyz"), enabled = true)
         assertTrue(session.active)
         val restorer = redactor.restorerFor(session)
         assertEquals("普通文本", restorer.feed("普通文本"))

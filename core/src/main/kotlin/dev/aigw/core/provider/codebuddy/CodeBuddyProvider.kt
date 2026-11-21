@@ -910,6 +910,9 @@ class CodeBuddyProvider internal constructor(
                 )
             }
         } catch (e: Exception) {
+            // 额度包拉不到就显示空表，但必须留下原因：否则界面只是「没有额度包」，
+            // 与「真的没有额度包」长得一模一样，无法区分。
+            hooks.onLog("WorkBuddy 拉取额度包失败：${e.message ?: "未知错误"}")
             emptyList()
         }
     }
@@ -1655,6 +1658,12 @@ class CodeBuddyProvider internal constructor(
  *    与 `max_completion_tokens` → `max_tokens`；
  * 4. 去掉上游会拦的特征文本（Claude Code / Codex CLI 的系统提示词片段），
  *    并用零宽空格打散宿主指纹（DeepSeek Runtime / project root / 11-128）。
+ *
+ * **[aigw-patch] 第 4 步无条件执行，不挂上游 v2.38.0 的 `promptRewriteEnabled` 开关。**
+ * 上游把这两步（含新加的 `PromptRiskRewriter` 内置规则表）做成了「安全防护」页可关的选项，
+ * 本 fork 不接这套：它改的是系统提示词字面，属于改写语义而非单纯转发；
+ * 而且 CodeBuddy 这两步是上游的硬协议要求——关掉会直接 400，不该出现在开关里。
+ * 同步时若看到 `promptRewrite` 形参被加回来，按本标记删掉，别跟着恢复。
  */
 internal fun prepareCodeBuddyBody(src: String): String = prepareCodeBuddyRequest(src).body
 

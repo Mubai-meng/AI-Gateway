@@ -560,6 +560,8 @@ internal class UiRoutes(private val host: EngineHost) {
             apiKey = req.json.strOr("apiKey", cur.apiKey),
             allowNoKey = req.json.boolOr("allowNoKey", cur.allowNoKey),
             exposeLan = req.json.boolOr("exposeLan", cur.exposeLan),
+            // [aigw-patch] CORS 白名单；未传时保留原值（老前端不洗掉已配置的名单）
+            corsAllowedOrigins = req.json.strOr("corsAllowedOrigins", cur.corsAllowedOrigins),
             onlyUsableModels = req.json.boolOr("onlyUsableModels", cur.onlyUsableModels),
             maxRotate = req.json.int("maxRotate", cur.maxRotate).coerceIn(0, 20),
             verboseLogging = req.json.boolOr("verboseLogging", cur.verboseLogging),

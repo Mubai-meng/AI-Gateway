@@ -77,7 +77,11 @@ class ApkDownloaderTest {
     private val payload = ByteArray(1_500_000) { (it * 31 % 251).toByte() }
 
     private val server = object : NanoHTTPD("127.0.0.1", 0) {
-        var rangeRequests = 0
+        /**
+         * 必须原子：下载器是 4 个线程并发打 Range，`var ++` 是「读-改-写」三步，
+         * 会丢更新（实测三轮里两轮只记到 3，断言假红）。NanoHTTPD 每个请求一个线程。
+         */
+        val rangeRequests = java.util.concurrent.atomic.AtomicInteger()
         override fun serve(session: IHTTPSession): Response {
             if (session.uri.contains("missing")) {
                 return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
@@ -92,7 +96,7 @@ class ApkDownloaderTest {
                 return response
             }
             val range = session.headers["range"]
-            if (range != null) rangeRequests++
+            if (range != null) rangeRequests.incrementAndGet()
             val total = payload.size.toLong()
             if (range == null || !range.startsWith("bytes=")) {
                 return newFixedLengthResponse(
@@ -154,7 +158,7 @@ class ApkDownloaderTest {
         )
         assertEquals(payload.size.toLong(), result.bytes)
         assertEquals(4, result.threads)
-        assertTrue(server.rangeRequests >= 4, "应发起多段 Range 请求，实际 ${server.rangeRequests}")
+        assertTrue(server.rangeRequests.get() >= 4, "应发起多段 Range 请求，实际 ${server.rangeRequests.get()}")
         assertContentEquals(payload, target.readBytes())
         assertNotNull(progress.lastOrNull())
     }

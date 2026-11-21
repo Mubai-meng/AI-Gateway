@@ -25,7 +25,7 @@ sh tools/uitest/run_all.sh <UI_PORT>
 
 | 脚本 | 做什么 | 通过标准 |
 |---|---|---|
-| `api_probe.py <port>` | 91 条请求打 46 个端点：读、写、缺参、非法参、GET 打写接口、畸形 JSON、超大请求体 | 非 200 的必须是语义正确的 400/404/413，**不能有 500** |
+| `api_probe.py <port>` | 100 条请求打 48 个端点：读、写、缺参、非法参、GET 打写接口、畸形 JSON、超大请求体；含 CORS 白名单往返与 `/metrics` 格式校验（指标名、`# TYPE` 行数、Content-Type） | 非 200 的必须是语义正确的 400/404/413，**不能有 500**；指标缺失项必须为空 |
 | `ui_walk.js <baseUrl> <out.json>` | 真 Chromium 打开页面，13 页逐页点完每个按钮/开关/tab/表格行；每步判断弹窗与 Toast 并关闭 | `exceptions: 0`、`consoleErrors: 0`、`overflow: []` |
 | `ui_backup_walk.js <baseUrl> <out.json>` | 备份页的**深度**巡检：创建 → 接口 +1 → 列表行数同步 → toast → 点恢复 → 二次确认 → pending 出现 → 「等待生效」卡渲染 → 取消 → 删除 -1 → 切走切回。通用巡检点不到（恢复是两段式的，且写操作要跳过） | 12 步全通、`issues: []`、`overflow: 0`；宽/窄窗口各跑一轮 |
 | `ui_groups_walk.js <baseUrl> <out.json>` | 路由组页的**深度**巡检：新建 → 空成员被拦 → 从模型目录加成员 → 改优先级 → 规则弹窗填全 7 类条件 → 保存 → 切页回来 → auto 只读 → 删除。通用巡检点不到编辑区（它是「点了组才出现」的） | 20 步全通、`exceptions: 0`、`overflow: 0`、`issues: []` |

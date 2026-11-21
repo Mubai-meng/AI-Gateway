@@ -75,6 +75,22 @@ def main():
     call("POST", "/ui/auto/chain", {"members": [{"providerId": "x", "model": ""}]}, "空模型名成员")
     call("POST", "/ui/settings", {}, "空 body（应保持原值）")
     call("POST", "/ui/settings", {"port": "abc"}, "端口非数字")
+    # CORS 白名单往返：填了要能存回来，清空要能恢复通配（默认 '*' 行为不能被升级破坏）
+    call("POST", "/ui/settings", {"corsAllowedOrigins": "https://probe.example"}, "写白名单")
+    raw = call("GET", "/ui/state")
+    got = json.loads(raw).get("settings", {}).get("corsAllowedOrigins")
+    print("   写后回读 corsAllowedOrigins=%r" % got, flush=True)
+    call("POST", "/ui/settings", {"corsAllowedOrigins": ""}, "清空白名单")
+    raw = call("GET", "/ui/state")
+    got = json.loads(raw).get("settings", {}).get("corsAllowedOrigins")
+    print("   清空后回读 corsAllowedOrigins=%r" % got, flush=True)
+    # 不传该字段时不能把已配置的名单洗掉（老前端只传部分字段）
+    call("POST", "/ui/settings", {"corsAllowedOrigins": "https://keep.example"}, "写名单")
+    call("POST", "/ui/settings", {"maxRotate": 3}, "只传无关字段")
+    raw = call("GET", "/ui/state")
+    got = json.loads(raw).get("settings", {}).get("corsAllowedOrigins")
+    print("   只传无关字段后回读=%r（应仍是 https://keep.example）" % got, flush=True)
+    call("POST", "/ui/settings", {"corsAllowedOrigins": ""}, "还原为空")
     call("POST", "/ui/groups", {}, "缺 groups")
     print("== 自定义供应商 ==")
     call("GET", "/ui/custom")
@@ -138,6 +154,23 @@ def main():
     call("POST", "/ui/backup/restore", {"name": "../evil.zip"}, "恢复穿越路径")
     call("POST", "/ui/backup/restore", {"name": "__nope__.zip"}, "恢复不存在的备份")
     call("POST", "/ui/backup/cancel", {}, "取消（当前无 pending）")
+
+    print("== Prometheus 指标 ==")
+    # 打到的是网关端口而不是 UI 端口；本机免 Key，格式必须是 0.0.4 文本
+    gate = "http://127.0.0.1:%s" % json.loads(call("GET", "/ui/state")).get("port")
+    try:
+        with urllib.request.urlopen(gate + "/metrics", timeout=30) as r:
+            text = r.read().decode("utf-8", "replace")
+            print("   /metrics %s 字节" % r.status, len(text), flush=True)
+            print("   Content-Type=%s" % r.headers.get("Content-Type"), flush=True)
+            need = ["aigw_requests_total", "aigw_provider_accounts", "aigw_http_requests_in_flight"]
+            missing = [n for n in need if n not in text]
+            print("   缺失指标=%s" % (missing or "无"), flush=True)
+            # TYPE 行必须存在，否则 Prometheus 侧只是 untyped
+            print("   TYPE 行数=%d" % text.count("# TYPE "), flush=True)
+    except Exception as e:
+        print("   /metrics 失败 %s" % e, flush=True)
+        RESULTS.append(("GET", "/metrics", -1, 0, str(e), "指标端点不可用"))
 
     print("== 开关类 ==")
     call("POST", "/ui/auto/toggle", {"enabled": False})
