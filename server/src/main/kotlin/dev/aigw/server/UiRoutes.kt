@@ -142,6 +142,43 @@ internal class UiRoutes(private val host: EngineHost) {
         },
         "/ui/backup/cancel" to { req -> ensurePost(req); UiOut.Json(host.backup.cancelRestore()) },
 
+        // ---- 账号保险柜（账号数据的自动快照 / 导出 / 导入）
+        // 与上面的整目录备份刻意分开：这里只有账号、格式是明文 JSON、能跨机用。
+        // `export` 走 /ui/account/export（已有）——保险柜存的就是那个格式，
+        // 所以「导出当前账号」与「导出某份快照」是同一个文件形态，用户不用理解两套格式。
+        "/ui/vault" to { req -> UiOut.Json(host.vault.list()) },
+        "/ui/vault/snapshot" to { req ->
+            ensurePost(req)
+            UiOut.Json(vaultSnapshotNow())
+        },
+        "/ui/vault/read" to { req ->
+            // 强制 POST：这个端点会把**明文凭证**整份吐出来。
+            // 做成 GET 等于给浏览器里任意页面留了一条「构造 img src 就把账号读走」的路子
+            // （同源策略挡不住 <img>，挡住的只是读取响应——但响应体本身也在这里）。 
+            ensurePost(req)
+            val name = req.requireStr("name", "快照名")
+            val text = host.vault.read(name)
+                ?: throw UiException.notFound("快照不存在或不可读：$name")
+            // 直接回文件体而不是塞进 JSON：这是一份可另存为 .json 的导出文件，
+            // 塞进 JSON 字段里前端还得再解一层，且浏览器会把它当文本显示。
+            UiOut.Text(text, "application/json; charset=utf-8")
+        },
+        "/ui/vault/import" to { req ->
+            ensurePost(req)
+            // 支持从快照名导入，也支持直接传正文（前端读文件后传上来）
+            val name = req.str("name")
+            val raw = if (name.isNotEmpty()) {
+                host.vault.read(name) ?: throw UiException.notFound("快照不存在：$name")
+            } else {
+                req.requireStr("raw", "账号内容")
+            }
+            UiOut.Json(importAccountBundle(raw, req.json.boolOr("overwrite", false)))
+        },
+        "/ui/vault/delete" to { req ->
+            ensurePost(req)
+            UiOut.Json(host.vault.delete(req.requireStr("name", "快照名")))
+        },
+
         // ---- 更新
         // 强制更新的「检查」端点。零服务器：清单是 GitHub 仓库里的一个 update.json，
         // 发布新版只改文件 + commit，客户端 raw 拉取即生效。
@@ -424,6 +461,68 @@ internal class UiRoutes(private val host: EngineHost) {
             addProperty("message", "已导出 ${engine.accounts().size} 个账号")
             addProperty("payload", text)
         })
+    }
+
+    /**
+     * 立即写一份手动快照。
+     *
+     * 与「导出当前账号」的差别只有一处：这个会**落进保险柜目录**并参与轮转，
+     * 而导出只是把内容递给浏览器让用户自己存。用户点「立即快照」的动机通常是
+     * 「我要动数据了，先留一份」——所以它必须留在本地，不能只是下载。
+     */
+    private fun vaultSnapshotNow(): JsonObject {
+        val payload = engine.exportAccounts()
+        val count = engine.accounts().size
+        if (count == 0) return resultJson(false, "账号池是空的，没有可快照的内容")
+        val f = host.vault.write(payload, AccountVault.REASON_MANUAL, APP_VERSION)
+            ?: return resultJson(false, "快照失败，原因见保险柜状态")
+        return JsonObject().apply {
+            addProperty("ok", true)
+            addProperty("message", "已快照 $count 个账号（${AccountVault.sizeText(f.length())}）")
+            addProperty("name", f.name)
+            addProperty("path", f.absolutePath)
+        }
+    }
+
+    /**
+     * 导入一份账号信封（批量）。
+     *
+     * 与 `/ui/account/import` 的区别：那个是「某个供应商的粘贴导入」，
+     * 一次只认一个 providerId 的私有格式；这个是整份 `aigw-accounts` 信封，
+     * 一次能带多个供应商的多个账号——也就是快照与导出文件的原生格式。
+     *
+     * 未注册的供应商单独报出来而不是静默跳过：用户从别人机器导入时，
+     * 自己这份没装那个 provider，界面必须说清「这几条没导进来、为什么」。
+     */
+    private fun importAccountBundle(raw: String, overwrite: Boolean): JsonObject {
+        val r = runCatching { engine.importAccounts(raw, overwrite) }
+            .getOrElse { e ->
+                // decode 抛的是 IllegalArgumentException，消息是给用户看的原话
+                throw UiException.badRequest(e.message ?: "导入失败")
+            }
+        val message = buildString {
+            append("新增 ${r.added.size}")
+            if (r.updated.isNotEmpty()) append("、覆盖 ${r.updated.size}")
+            if (r.skipped.isNotEmpty()) append("、跳过 ${r.skipped.size}")
+            if (r.unknownProviders.isNotEmpty()) {
+                val ids = r.unknownProviders.map { it.substringBefore('/') }.toSortedSet()
+                append("、未识别的供应商 ${r.unknownProviders.size}（${ids.joinToString("/")}）")
+            }
+        }
+        // 导入成功后不再这里单独写快照：core 的 importAccounts 已经在尾部触发了
+        // onAccountsChanged，Main 挂的回调会合并写一份（防抖 3 秒）。
+        // 两处都写会产生两份内容相同的快照，反而挤占轮转名额。
+        return JsonObject().apply {
+            // ok 表示「这次导入没有出错」，不等于「有账号被写进去」：
+            // 全部已存在而跳过是正常结果，用 ok:false 会让前端弹红条，
+            // 用户看到「跳过 2」却配一个失败提示，反而更困惑。
+            addProperty("ok", true)
+            addProperty("message", message)
+            addProperty("added", r.added.size)
+            addProperty("updated", r.updated.size)
+            addProperty("skipped", r.skipped.size)
+            addProperty("unknown", r.unknownProviders.size)
+        }
     }
 
     // ---------------------------------------------------------------- 登录

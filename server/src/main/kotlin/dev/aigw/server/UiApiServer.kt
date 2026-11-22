@@ -69,7 +69,7 @@ class UiApiServer(
         )
         return when (val out = routes.handle(req)) {
             is UiOut.Json -> jsonResponse(out.body)
-            is UiOut.Text -> textResponse(out.status, out.text)
+            is UiOut.Text -> textResponse(out.status, out.text, out.mime)
             is UiOut.FileBody -> serveFile(out.file, out.mime)
         }
     }

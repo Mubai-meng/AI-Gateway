@@ -866,7 +866,13 @@ class GatewayEngine(
 
     fun removeAccount(providerId: String, uid: String): Boolean {
         val removed = pool.remove(providerId, uid)
-        if (removed) log("已删除账号：$providerId/$uid")
+        if (removed) {
+            log("已删除账号：$providerId/$uid")
+            // 删除也要通知：Auto 链里那条候选已经失效，账号保险柜也该记一份「删掉了谁」。
+            // 原先只有登录/自动刷新这两条路径通知，删除走的是静默路径——
+            // 结果是删完账号后自动链仍指向一个不存在的号，要等下次重启才自然清理。
+            onAccountsChanged?.invoke()
+        }
         return removed
     }
 
@@ -1019,6 +1025,9 @@ class GatewayEngine(
         }
         if (added.isNotEmpty() || updated.isNotEmpty()) {
             onLog("账号导入：新增 ${added.size}、覆盖 ${updated.size}、跳过 ${skipped.size}")
+            // 批量导入是「用户主动搬数据」，必须让回调跑：否则 Auto 链不重建、
+            // 账号保险柜也不会在导入后立刻留一份（那是用户最需要留痕的时刻）。
+            onAccountsChanged?.invoke()
         }
         return AccountImportResult(added = added, updated = updated, skipped = skipped, unknownProviders = unknown)
     }

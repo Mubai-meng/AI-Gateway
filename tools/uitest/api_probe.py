@@ -155,6 +155,26 @@ def main():
     call("POST", "/ui/backup/restore", {"name": "__nope__.zip"}, "恢复不存在的备份")
     call("POST", "/ui/backup/cancel", {}, "取消（当前无 pending）")
 
+    print("== 账号保险柜 ==")
+    # 同样只测拒绝路径与只读：snapshot 会真写文件，import 会真改账号池。
+    call("GET", "/ui/vault")
+    call("POST", "/ui/vault/delete", {}, "缺 name")
+    call("POST", "/ui/vault/delete", {"name": "../evil.json"}, "删除穿越路径")
+    call("POST", "/ui/vault/delete", {"name": "accounts-nope.json"}, "删除不存在")
+    call("POST", "/ui/vault/read", {}, "读缺 name")
+    call("POST", "/ui/vault/read", {"name": "../evil.json"}, "读穿越路径")
+    call("POST", "/ui/vault/read", {"name": "vault-state.json"}, "读非快照文件（应拒）")
+    call("GET", "/ui/vault/read?name=x.json", None, "GET 读快照（含明文凭证，应 400）")
+    call("POST", "/ui/vault/import", {}, "导入缺参数")
+    call("POST", "/ui/vault/import", {"raw": "not json"}, "导入非 JSON")
+    call("POST", "/ui/vault/import", {"raw": '{"format":"other","accounts":[]}'}, "导入格式不符")
+    call("POST", "/ui/vault/import", {"raw": '{"format":"aigw-accounts","version":1,"accounts":[]}'},
+         "导入空账号列表（应拒）")
+    # 空池时 snapshot 必须明确说「没有可快照的内容」而不是写个空文件
+    raw = call("GET", "/ui/state")
+    if not (json.loads(raw).get("accounts") or []):
+        call("POST", "/ui/vault/snapshot", {}, "空池快照（应 ok:false）")
+
     print("== Prometheus 指标 ==")
     # 打到的是网关端口而不是 UI 端口；本机免 Key，格式必须是 0.0.4 文本
     gate = "http://127.0.0.1:%s" % json.loads(call("GET", "/ui/state")).get("port")

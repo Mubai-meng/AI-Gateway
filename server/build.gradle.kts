@@ -24,6 +24,12 @@ dependencies {
     // core 用 implementation 引入，不会传递到本模块编译期，必须显式声明
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 application {

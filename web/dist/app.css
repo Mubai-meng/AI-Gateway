@@ -593,6 +593,25 @@ table.grid tbody tr.clickable { cursor: pointer; }
 /* 三个字段挤在一行：158px 下限才能在 543 CSS px 的内容区里排下三列 */
 .media-grid { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }
 .stack-12 { display: flex; flex-direction: column; gap: 12px; }
+/* ---- 账号保险柜（账号页底部卡片） ---- */
+/* 快照选择列表：每行 <标签><名字 省略><按钮>，名字必须能省略——
+   文件名带时间戳，长 40+ 字符，不省略会把「选它」按钮挤出 602px 内容区。 */
+.vault-pick-list { display: flex; flex-direction: column; gap: 6px; }
+.vault-pick-row {
+  display: flex; gap: 8px; align-items: center; font-size: 12px;
+}
+.vault-pick-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 文件选择：原生 <input type=file> 在各浏览器外观差异大，
+   统一成「按钮 + 文件名」的行式布局；input 藏在 label 里靠点击 label 触发 */
+.file-pick { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.file-pick input[type=file] {
+  font-size: 12px; color: var(--text2);
+  flex: 0 1 auto; min-width: 0; max-width: 260px;
+}
+
 .action-row.tight { margin-top: 0; }
 .media-gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .thumb {

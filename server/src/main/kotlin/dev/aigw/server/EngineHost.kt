@@ -2,6 +2,7 @@ package dev.aigw.server
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import dev.aigw.core.gateway.GatewayEngine
 import dev.aigw.core.gateway.ProviderInfo
 import dev.aigw.core.provider.CreditUnit
@@ -58,6 +59,98 @@ class EngineHost(val dataDir: File) {
      * 加密存储打开之前）被 Main 调用一次，两处必须用同一个实例。
      */
     internal val backup: BackupManager = BackupManager(dataDir)
+
+    /**
+     * 账号保险柜：账号数据的自动快照（与上面的整目录备份是两件事，见 [AccountVault] 注释）。
+     *
+     * 触发时机在本类里落地：启动一次、账号变更后延迟合并一次、版本变化时一次。
+     * 为什么放在 host：它要读 `engine.exportAccounts()`，也要在构造完 EngineHost
+     * 之后立刻能用（此时账号池已经 load 完毕）。
+     */
+    internal val vault: AccountVault = AccountVault(dataDir).also { it.keepCount = VAULT_KEEP }
+
+    /** 上次看到的版本号，用来判断「这次启动是不是跨了版本」（= 刚升级过）。 */
+    private val lastVersionFile: File = File(dataDir, ".last-version.txt")
+
+    /** 自动快照的线程：所有触发点都只往这里投任务，保证不会并发写同一个目录。 */
+    private val vaultExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "aigw-account-vault").apply { isDaemon = true }
+    }
+
+    /**
+     * 防抖：账号自动刷新 token 会连续触发，每次都写一份快照会把历史全刷成「最近几秒」。
+     * 用「投一个延迟任务 + 期间再来的请求合并进去」而不是 sleep：
+     * 后者会占住线程，且无法取消。
+     */
+    private val vaultPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 启动时跑一次自动快照。**必须早于任何账号变更**，否则「升级后首次启动」那一份
+     * 可能被新数据覆盖。
+     *
+     * 三件事按顺序做：
+     * 1. 版本变了（= 刚升级）→ 用 `upgrade` 原因写一份，**不参与轮转**；
+     * 2. 无论版本变没变，都把当前账号落一份日常快照（内容没变则跳过）；
+     * 3. 更新 `.last-version.txt`。
+     *
+     * @return 本次实际写了哪些：给启动日志用，用户能从日志里看到"升级前帮你存了一份"
+     */
+    fun vaultSnapshotOnStartup(): String {
+        val current = APP_VERSION
+        val previous = runCatching { lastVersionFile.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+        val upgraded = previous != null && previous.isNotEmpty() && previous != current
+        val sb = StringBuilder()
+        return try {
+            val payload = engine.exportAccounts()
+            if (payloadAccounts(payload) == 0) {
+                // 空账号池不写快照：否则全新安装的机器上，10 份历史全是空文件，
+                // 真丢了数据时用户翻到的第一份就是空的。
+                sb.append("账号池为空，跳过自动快照")
+            } else {
+                if (upgraded) {
+                    val f = vault.write(payload, AccountVault.REASON_UPGRADE, "$previous→$current")
+                    sb.append(if (f != null) "升级前快照：${f.name}" else "升级前快照失败")
+                }
+                val f2 = vault.writeIfChanged(payload, AccountVault.REASON_STARTUP, current)
+                if (sb.isNotEmpty()) sb.append("；")
+                sb.append(if (f2 != null) "启动快照：${f2.name}" else "启动快照已是最新（内容未变）")
+            }
+            lastVersionFile.writeText(current)
+            sb.toString()
+        } catch (e: Exception) {
+            sb.append("自动快照异常：${e.javaClass.simpleName}: ${e.message}")
+            sb.toString()
+        }
+    }
+
+    /**
+     * 账号变更后延迟写一份（[delayMillis] 内的连续变更合并成一次）。
+     *
+     * 延迟而不是立即：一次批量导入会逐条 upsert，每条都触发回调；
+     * 立即写等于把 20 个账号写成 20 份快照，互相挤掉。
+     */
+    fun vaultSnapshotSoon(delayMillis: Long = 3000) {
+        if (!vaultPending.compareAndSet(false, true)) return
+        vaultExecutor.execute {
+            try {
+                Thread.sleep(delayMillis)
+                vaultPending.set(false)
+                val payload = engine.exportAccounts()
+                if (payloadAccounts(payload) == 0) return@execute
+                vault.writeIfChanged(payload, AccountVault.REASON_CHANGE, APP_VERSION)
+            } catch (_: Exception) {
+                // 快照失败不能让进程崩：失败原因已经写进 vault-state.json，界面能读到
+            } finally {
+                vaultPending.set(false)
+            }
+        }
+    }
+
+    /** 手上这份导出内容里有几个账号（不为空才值得存）。 */
+    private fun payloadAccounts(payload: String): Int = runCatching {
+        JsonParser.parseString(payload).asJsonObject
+            .get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray?.size() ?: 0
+    }.getOrDefault(0)
 
     /** 写操作串行锁。 */
     private val writeLock = Any()
@@ -555,6 +648,9 @@ class EngineHost(val dataDir: File) {
  * 本值即客户端判定「是否有新版」的基准（见 [UpdateChecker]）。
  * 只升这里不升清单 → 所有已装实例立刻看到"有新版本"；只升清单不升这里 → 永远不提示。 */
 const val APP_VERSION = "0.9.9"
+
+/** 账号保险柜日常快照保留份数（升级前那份另算，不参与轮转）。 */
+private const val VAULT_KEEP = 10
 
 /** 额度单位转成前端显示用的后缀。 */
 fun unitSuffix(unit: String): String = when (unit) {

@@ -18,6 +18,10 @@ installer/
 .instance.json
 .instance.lock
 antigravity-oauth.json
+# 账号保险柜与整目录备份的默认落点（都在数据目录的兄弟目录，仓库根下也可能出现）
+account-vault/
+accounts-*.json
+backups/
 
 # ---- 临时与备份 ----
 .tmp/

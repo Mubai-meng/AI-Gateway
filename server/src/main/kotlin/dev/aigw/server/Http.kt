@@ -83,10 +83,14 @@ internal fun jsonResponse(body: JsonObject, status: Response.Status = Response.S
 }
 
 /** 文本响应（错误页、403、413 等）。 */
-internal fun textResponse(status: Response.Status, text: String): Response {
+internal fun textResponse(
+    status: Response.Status,
+    text: String,
+    mime: String = "text/plain; charset=utf-8",
+): Response {
     val bytes = text.toByteArray(StandardCharsets.UTF_8)
     return NanoHTTPD.newFixedLengthResponse(
-        status, "text/plain; charset=utf-8", ByteArrayInputStream(bytes), bytes.size.toLong(),
+        status, mime, ByteArrayInputStream(bytes), bytes.size.toLong(),
     )
 }
 
