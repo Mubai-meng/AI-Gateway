@@ -277,6 +277,9 @@ class EngineHost(val dataDir: File) {
     /** 关停后台线程（进程退出时调用；不调用也能靠 daemon 线程自然结束）。 */
     fun shutdown() {
         metaExecutor.shutdownNow()
+        // 合并提交型存储的最后一道保险：网关若从未启动（强制更新闸门、端口占用），
+        // `engine.stop()` 里那次 flush 可能根本没机会跑，这里补一次。
+        runCatching { engine.flushStore() }
     }
 
     /**

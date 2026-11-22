@@ -208,10 +208,24 @@ fun migratePlaintext(dataDir: File, encrypted: EncryptedKeyValueStore): Int {
     return keys.size
 }
 
-/** 构造桌面版存储：加密目录 dataDir/secure，主密钥 dataDir/master.key。 */
+/**
+ * 构造桌面版存储：加密目录 dataDir/secure，主密钥 dataDir/master.key。
+ *
+ * 外层再套一层 [dev.aigw.core.store.BatchedKeyValueStore]：Windows 侧是「每键一个文件、
+ * 每次写都临时文件 + 原子替换」，一个请求要写调用记录（**含请求/响应原文，十几 KB**）、
+ * 用量聚合、密钥台账三笔 —— 直接同步落盘意味着请求线程等着三次 fsync，
+ * 并发一高全堆在磁盘上。
+ *
+ * 只对 `logs/`、`usage/`、`clientkey/` 做合并（高频、可容忍短窗口丢失）；
+ * `account/`、`settings/`、`login/`、`pool/` 仍同步落盘 —— 那些丢了要用户重新登录，
+ * 用批量换来的那点延迟不值得。
+ *
+ * 落盘保障：网关停止时 `GatewayEngine.stop()` 会调一次 `store.flush()`；
+ * 备份/导出前由调用方显式 `engine.flushStore()`。
+ */
 fun createDesktopStore(dataDir: File): KeyValueStore {
     val store = EncryptedKeyValueStore(File(dataDir, "secure"), File(dataDir, "master.key"))
     val migrated = migratePlaintext(dataDir, store)
     if (migrated > 0) println("[desktop] 已把 $migrated 个明文键迁入加密存储（含加密回滚副本 legacy-backup/），磁盘明文已清除")
-    return store
+    return dev.aigw.core.store.BatchedKeyValueStore(store)
 }

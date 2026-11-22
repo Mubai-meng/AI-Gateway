@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 
 namespace AiGatewayWeb
@@ -141,21 +142,50 @@ namespace AiGatewayWeb
         /// <summary>
         /// 结束后端。先请求正常退出，超时才强杀。
         ///
-        /// `CloseMainWindow` 对没有窗口的进程（javaw 无 GUI）不会做任何事，
-        /// 所以这里的等待一定是白等 4 秒——保留它是因为 installDist 形态的
-        /// cmd.exe 有窗口，关窗能让它把信号转给 java。
+        /// 这里是「数据会不会丢」的关键点：后端存储把 `logs/`、`usage/`、`clientkey/`
+        /// 的写入合并到 200ms 一次的批量提交里，只有 JVM 正常退出（shutdown hook）
+        /// 或显式 flush 才会落盘。直接 `Kill()` 是 TerminateProcess，**一个 hook 都不跑**——
+        /// 实测：发完请求立刻杀进程，重启后「今日请求数」少 1。
+        ///
+        /// 所以顺序是：先 `POST /ui/quit`（后端 flush 后自己 halt）→ 等 3 秒 →
+        /// 再退回到原来的 `CloseMainWindow` + `Kill()` 兜底。旧版后端没有这个端点，
+        /// 请求会 404，不影响后续流程。
         /// </summary>
         internal static void Stop()
         {
             try
             {
                 if (_proc == null || _proc.HasExited) return;
+                RequestQuit(Program.UiPort);
+                if (_proc.WaitForExit(3000)) return;
                 _proc.CloseMainWindow();
-                if (!_proc.WaitForExit(4000)) _proc.Kill();
+                if (!_proc.WaitForExit(2000)) _proc.Kill();
             }
             catch
             {
                 // 进程可能已经自己退了
+            }
+        }
+
+        /// <summary>
+        /// 通知后端「正常退出」。失败（后端没起、端口不通、旧版无此端点）一律忽略：
+        /// 这只是尽力而为的落盘机会，不是关窗的前置条件。
+        /// </summary>
+        internal static void RequestQuit(int uiPort)
+        {
+            if (uiPort <= 0) return;
+            try
+            {
+                using (var c = new HttpClient { Timeout = TimeSpan.FromSeconds(2) })
+                {
+                    var body = new StringContent("{}", Encoding.UTF8, "application/json");
+                    c.PostAsync("http://127.0.0.1:" + uiPort + "/ui/quit", body)
+                        .GetAwaiter().GetResult();
+                }
+            }
+            catch
+            {
+                // 尽力而为
             }
         }
 

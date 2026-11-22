@@ -769,9 +769,29 @@ class GatewayEngine(
             server?.stop()
             server = null
             requestLog.flush()
+            // 停止是最后一个能把待提交写入落盘的机会：服务被用户/系统停掉后
+            // 进程可能很快回收，合并窗口里的调用记录与用量会跟着丢。
+            store.flush()
             log("网关已停止")
         }
     }
+
+    /**
+     * 存储待提交状态（仅合并提交型存储有内容）；供 `/metrics` 与界面健康信息展示。
+     *
+     * 排障「为什么变慢」时先看这两项：pending 持续不为 0 说明写入速度跟不上产生速度，
+     * 单次提交耗时随体量线性增长则说明整份重写型存储的成本已经压不住了。
+     */
+    fun storeFlushStats(): dev.aigw.core.store.FlushStats? =
+        (store as? dev.aigw.core.store.BatchedKeyValueStore)?.flushStats()
+
+    /**
+     * 强制把待提交的写入落盘。
+     *
+     * 备份/恢复、导出这类「按文件快照整目录」的操作前必须调一次：合并提交型存储的
+     * 写入在 200ms 窗口里还留在内存，直接打包会漏掉最近的调用记录与用量。
+     */
+    fun flushStore() = store.flush()
 
     fun isRunning(): Boolean = server != null
 

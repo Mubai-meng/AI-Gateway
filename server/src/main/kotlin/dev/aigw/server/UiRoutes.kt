@@ -130,6 +130,9 @@ internal class UiRoutes(private val host: EngineHost) {
         "/ui/backup" to { req -> UiOut.Json(host.backup.list()) },
         "/ui/backup/create" to { req ->
             ensurePost(req)
+            // 存储是合并提交的（200ms 窗口），备份按文件快照整目录 ——
+            // 不先落盘的话，包里会漏掉最近那批调用记录与用量。
+            engine.flushStore()
             UiOut.Json(host.backup.create(req.json.boolOr("includeCallLogs", true)))
         },
         "/ui/backup/delete" to { req ->
@@ -141,6 +144,23 @@ internal class UiRoutes(private val host: EngineHost) {
             UiOut.Json(host.backup.requestRestore(req.requireStr("name", "备份名")))
         },
         "/ui/backup/cancel" to { req -> ensurePost(req); UiOut.Json(host.backup.cancelRestore()) },
+
+        // ---- 正常退出
+        // 外壳退出时若只能 `TerminateProcess`，JVM 的 shutdown hook 不会跑，
+        // 合并提交型存储里最后一个 200ms 窗口的写入直接丢掉（实测：请求后立即杀进程，
+        // 重启后今日请求数少 1）。所以给外壳一条「先请求正常退出」的路。
+        // 先同步 flush 再延迟 halt：响应必须写得出去，外壳才拿得到 200；
+        // 用 halt 而非 exit 是为了跳过可能卡住的其它 hook（NanoHTTPD 收尾偶尔不返回）。
+        "/ui/quit" to { req ->
+            ensurePost(req)
+            engine.flushStore()
+            Thread {
+                Thread.sleep(250)
+                runCatching { engine.flushStore() }
+                Runtime.getRuntime().halt(0)
+            }.apply { isDaemon = false; name = "aigw-quit" }.start()
+            UiOut.Json(JsonObject().apply { addProperty("ok", true) })
+        },
 
         // ---- 账号保险柜（账号数据的自动快照 / 导出 / 导入）
         // 与上面的整目录备份刻意分开：这里只有账号、格式是明文 JSON、能跨机用。
