@@ -5132,7 +5132,7 @@ function renderBackup() {
   if (items.length === 0) {
     tbody.innerHTML = `<tr><td colspan="5"><div class="empty">
       <span class="big">还没有备份</span>
-      <span>点右上角「立即备份」，会在数据目录旁边生成一份 .zip（含 master.key，否则密文解不开）</span></div></td></tr>`;
+      <span>点右上角「立即备份」，会在数据目录旁边生成一份 .zip（里面是明文，可直接解压查看）</span></div></td></tr>`;
   } else {
     items.forEach((it) => {
       const tr = el('tr');
@@ -5182,10 +5182,22 @@ function renderBackup() {
   ib.appendChild(el('p', 'desc mono selectable', (d.scope || []).join(' · ')));
   ib.appendChild(el('p', 'desc',
     '不含 webview2/（Chromium 缓存，约 80 MB，与本项目数据无关）、.instance.json（写死旧端口）、'
-    + '.update-cache.json。调用记录默认带上；关掉后包会小一半，但恢复后「调用记录」页是空的。'));
+    + '.update-cache.json。'));
+  ib.appendChild(el('p', 'desc err-text',
+    '包内是明文：解压后可以直接用编辑器看账号、设置、调用记录。'
+    + '磁盘上的 secure/ 仍然加密，但备份包不加密——个人自用、备份只在自己手里流转，'
+    + '加密只会让它压不动（密文压缩比 1.00）、也让你没法直接看一眼。'
+    + '如果哪天要传到别人能碰到的地方，先想清楚这一点。'));
+  ib.appendChild(el('p', 'desc',
+    '体积构成：调用记录（secure/logs/，每次对话一个 chatcmpl-* 文件）占九成以上。'
+    + '这部分是唯一的大头，其余账号/设置/用量加起来只有几十 KB。'
+    + '解成明文后 deflate 才压得动（压缩比从 1.00 降到 0.32），所以同一次备份从 2.2 MB 缩到 0.75 MB。'));
   ib.appendChild(el('p', 'desc',
     '恢复会先把当前数据整体快照一份（回滚包），再替换上面这些条目；'
     + '回滚包同样出现在列表里，恢复错了可以直接回退。'));
+  ib.appendChild(el('p', 'desc',
+    '恢复明文包后会自动重新加密 secure/，不会留下明文凭证。'
+    + '旧版本生成的加密包仍可恢复——包里自带 master.key，同一个密钥解得开。'));
   info.appendChild(ib);
   body.appendChild(info);
 }

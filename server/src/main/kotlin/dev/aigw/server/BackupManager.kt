@@ -17,8 +17,9 @@ import java.util.zip.ZipOutputStream
  * 数据目录的备份与恢复。
  *
  * 这一层是纯文件操作，不认识 HTTP，也不碰 core —— 它只保证一件事：
- * **任何一次替换都可回滚**。凭证全在 `secure/` 下，被 `master.key` 加密；
- * 备份包里同时带走密钥，否则恢复出来的密文在新机器上一条都解不开。
+ * **任何一次替换都可回滚**。磁盘上的凭证在 `secure/` 下、由 `master.key` 加密；
+ * **备份包里出的是明文**（见 [BackupCodec] 的说明：个人自用、无跨人流转需求，
+ * 而密文熵饱和导致 deflate 完全压不动，2.2 MB 的调用记录一点都不瘦）。
  *
  * 四条硬约定：
  * 1. **备份目录在数据目录之外**（`<dataDir>/../backups`）。放在里面的话，
@@ -35,6 +36,12 @@ internal class BackupManager(private val dataDir: File) {
 
     /** 备份存放目录：数据目录的兄弟目录，绝不在数据目录内部。 */
     val backupDir: File = File(dataDir.absoluteFile.parentFile, "backups")
+
+    /** 主密钥：只读不造（造密钥是启动期 `EncryptedKeyValueStore` 的职责）。 */
+    private val keyFile: File = File(dataDir, "master.key")
+
+    /** 懒加载一次，避免每个条目都读一遍 key 文件。 */
+    private var keyBytes: ByteArray? = null
 
     private val pendingFile: File = File(dataDir, PENDING_NAME)
 
@@ -65,7 +72,15 @@ internal class BackupManager(private val dataDir: File) {
     /**
      * 创建一份备份。
      *
-     * @param includeCallLogs 是否带上 `secure/logs/`（调用记录全文）。关掉后包小一半，
+     * 包内 `secure/` 条目是**明文**（`encrypted: false` 写进清单）。个人自用工具，
+     * 备份只在自己机器之间流转，没有"他人拿到包"这个威胁模型；而密文熵饱和，
+     * deflate 压缩比实测 1.00，2.2 MB 的调用记录一点都不瘦。磁盘上的 `secure/`
+     * 仍然加密，那一层保护的是别的场景。
+     *
+     * 旧版本生成的加密包**仍可恢复**：包内自带 `master.key` + 密文，搬回数据目录后
+     * 同一个 key 解得开。恢复逻辑不关心包内是密文还是明文。
+     *
+     * @param includeCallLogs 是否带上 `secure/logs/`（调用记录全文）。关掉后包明显变小，
      *                        但恢复后「调用记录」页会是空的——所以这是个显式开关，
      *                        不是默默裁剪。
      */
@@ -103,6 +118,9 @@ internal class BackupManager(private val dataDir: File) {
                     addProperty("createdAtMillis", System.currentTimeMillis())
                     addProperty("appVersion", APP_VERSION)
                     addProperty("includeCallLogs", includeCallLogs)
+                    // 包内 secure/ 条目是否为明文。读包的人（或将来做导入功能的自己）
+                    // 需要知道这件事，否则会去找 master.key 却不知道它其实只对旧包有用。
+                    addProperty("encrypted", false)
                     addProperty("entryCount", entries)
                     addProperty("dataDirName", dataDir.absoluteFile.name)
                 }
@@ -146,7 +164,15 @@ internal class BackupManager(private val dataDir: File) {
         if (rel.endsWith(".tmp")) return 0
         try {
             zos.putNextEntry(ZipEntry(rel))
-            FileInputStream(file).use { it.copyTo(zos) }
+            // secure/ 下的条目落盘时是 AGW1 密文，入包前解成明文。
+            // 解不开（key 丢了 / 字节对不上）就原样写密文——宁可包里难看，
+            // 也不能因为一个条目解不开就把它从备份里吞掉。
+            val plain = if (rel.startsWith("secure/")) plainBytes(file) else null
+            if (plain != null) {
+                zos.write(plain)
+            } else {
+                FileInputStream(file).use { it.copyTo(zos) }
+            }
             zos.closeEntry()
             return 1
         } catch (e: Exception) {
@@ -155,6 +181,19 @@ internal class BackupManager(private val dataDir: File) {
             runCatching { zos.closeEntry() }
             return 0
         }
+    }
+
+    /**
+     * 取某个 secure/ 条目的明文字节；不是密文返回原文，解密失败返回 null。
+     *
+     * 返回原文（而不是 null）是有意的：`EncryptedKeyValueStore` 有"非 AGW1 就当明文读"
+     * 的兼容分支，磁盘上真存在未迁移的明文数据时，它也应该以明文形式进包。
+     */
+    private fun plainBytes(file: File): ByteArray? {
+        val raw = runCatching { file.readBytes() }.getOrNull() ?: return null
+        if (!BackupCodec.looksEncrypted(raw)) return raw
+        val key = keyBytes ?: BackupCodec.loadKey(keyFile)?.also { keyBytes = it } ?: return null
+        return BackupCodec.decrypt(raw, key)
     }
 
     // ---------------------------------------------------------------- 列举 / 删除
@@ -356,8 +395,17 @@ internal class BackupManager(private val dataDir: File) {
         }
         runCatching { staging.deleteRecursively() }
 
+        // 5) **明文包必须重新加密**：包内是明文（`encrypted: false`），原样搬回去
+        //    就等于把凭证铺在磁盘上。旧加密包不受影响（`looksEncrypted` 直接跳过）。
+        //    放在这里、任何 `EncryptedKeyValueStore` 构造之前：此时没有活句柄。
+        val reencrypted = BackupCodec.reencryptSecureTree(File(dataDir, "secure"), keyFile)
+
         pendingFile.delete()
-        val msg = "已从 $reqName 恢复 $restored 个条目；恢复前快照为 $rollbackName"
+        val msg = buildString {
+            append("已从 $reqName 恢复 $restored 个条目")
+            if (reencrypted > 0) append("（其中 $reencrypted 个明文条目已重新加密）")
+            append("；恢复前快照为 $rollbackName")
+        }
         writeLast(false, msg, reqName, rollbackName)
         return msg
     }
