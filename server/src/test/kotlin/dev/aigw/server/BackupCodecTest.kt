@@ -206,6 +206,12 @@ class BackupCodecTest {
         File(secure, "logs").mkdirs()
         File(secure, "logs/calls").mkdirs()
         File(secure, "logs/calls/chatcmpl-1").writeText("payload")
+        // 迁移遗留的那份：老版本把明文日志挪到 secure/legacy-backup/logs/ 下。
+        // 只按 "secure/logs/" 前缀排除会漏掉它——实测 33.6 KB 的包里有 26 KB 是它。
+        val legacy = File(secure, "legacy-backup/logs/calls").also { it.mkdirs() }
+        File(legacy, "chatcmpl-old").writeText("old payload")
+        File(secure, "legacy-backup/account").mkdirs()
+        File(secure, "legacy-backup/account/keep").writeText("keep me")
         File(secure, "acc").writeText("keep")
 
         val bm = BackupManager(dataDir)
@@ -214,7 +220,9 @@ class BackupCodecTest {
 
         java.util.zip.ZipFile(File(bm.backupDir, res.get("name").asString)).use { zf ->
             assertNull(zf.getEntry("secure/logs/calls/chatcmpl-1"), "logs 应被跳过")
+            assertNull(zf.getEntry("secure/legacy-backup/logs/calls/chatcmpl-old"), "遗留 logs 也要跳过")
             assertTrue(zf.getEntry("secure/acc") != null, "其余条目必须照常带上")
+            assertTrue(zf.getEntry("secure/legacy-backup/account/keep") != null, "只有 logs 段该被排除")
         }
     }
 

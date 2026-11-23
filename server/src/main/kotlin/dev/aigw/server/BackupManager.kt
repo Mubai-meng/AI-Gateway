@@ -92,8 +92,14 @@ internal class BackupManager(private val dataDir: File) {
     }.filter { File(dataDir, it).exists() }
 
     /** 目录里只有调用记录的子路径：打包、清理、恢复三处都按这两条前缀排除。 */
-    private fun isCallLog(rel: String): Boolean =
-        rel.startsWith("secure/logs/") || rel.startsWith("logs/")
+    /**
+     * 是不是调用记录。**按路径里的 `logs` 段判，不按前缀**。
+     *
+     * 只写 `secure/logs/` 会漏掉迁移遗留的那份：老版本把明文日志挪到
+     * `secure/legacy-backup/logs/calls/` 下，实测 13 账号的包 33.6 KB 里有 26 KB 是它
+     * （4 个 chatcmpl-*）。用户要求"调用记录不要备份"，那就该一个都不带。
+     */
+    private fun isCallLog(rel: String): Boolean = rel.split('/').any { it == "logs" }
 
     // ---------------------------------------------------------------- 创建
 
