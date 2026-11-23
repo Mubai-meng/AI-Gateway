@@ -15,6 +15,36 @@ data class AccountTransferEnvelope(
     val version: Int,
     val exportedAt: Long,
     val accounts: List<ProviderAccount>,
+    /**
+     * 账号所属的自定义供应商定义（只有 `custom:*` 才有）。
+     *
+     * v1 文件没有这一段，读出来是空表——老备份照样能导，只是那些 `custom:*`
+     * 账号在目标机上仍会「未识别」。所以这里是**向后兼容的空缺省**，不是必填。
+     */
+    val providers: List<TransferProvider> = emptyList(),
+)
+
+/**
+ * 自定义供应商的可搬运定义。
+ *
+ * 只带「重建一个能用的供应商」所必需的东西：短名、显示名、接口地址、
+ * 协议、模型列表（含出图模型）。
+ *
+ * **不带 `apiKeys`**。理由有两层：
+ * 1. 明文 API Key 已经在账号条目的 `secret` 里（每个 key 一个账号），
+ *    再抄一份等于同一份密钥在包里出现两次。
+ * 2. `GatewayEngine.syncCustomAccounts(config)` 一旦看到 `apiKeys` 非空，
+ *    就会按它增删账号池——跨机导入时那会把「用户自己另加的 key」当成多余项删掉。
+ *    带空 apiKeys 则 `syncCustomAccounts` 直接 early-return，账号池只受本次导入影响。
+ */
+data class TransferProvider(
+    val providerId: String,
+    val key: String,
+    val name: String,
+    val baseUrl: String,
+    val protocol: String,
+    val models: List<String>,
+    val imageModels: List<String>,
 )
 
 /**
@@ -30,7 +60,16 @@ object AccountTransfer {
     /** 当前版本；导入时高于它的文件一律拒绝（宁可报错也不猜字段）。 */
     const val VERSION = 1
 
-    fun encode(accounts: List<ProviderAccount>, exportedAt: Long): String {
+    /**
+     * 编码。**版本号仍是 1**——`providers` 是新增的可选段，
+     * 老版本读它会被忽略（decode 只挑它认识的键），所以不必升版本把老客户端挡在外面。
+     * 反过来：老文件没有这一段，[decode] 会给出空表，导入行为与升级前一致。
+     */
+    fun encode(
+        accounts: List<ProviderAccount>,
+        exportedAt: Long,
+        providers: List<TransferProvider> = emptyList(),
+    ): String {
         val array = JsonArray()
         for (account in accounts) {
             array.add(JsonObject().apply {
@@ -45,6 +84,21 @@ object AccountTransfer {
             addProperty("version", VERSION)
             addProperty("exportedAt", exportedAt)
             add("accounts", array)
+            if (providers.isNotEmpty()) {
+                add("providers", JsonArray().apply {
+                    providers.forEach { p ->
+                        add(JsonObject().apply {
+                            addProperty("providerId", p.providerId)
+                            addProperty("key", p.key)
+                            addProperty("name", p.name)
+                            addProperty("baseUrl", p.baseUrl)
+                            addProperty("protocol", p.protocol)
+                            add("models", JsonArray().apply { p.models.forEach { add(it) } })
+                            add("imageModels", JsonArray().apply { p.imageModels.forEach { add(it) } })
+                        })
+                    }
+                })
+            }
         }.toString()
     }
 
@@ -90,7 +144,47 @@ object AccountTransfer {
             version = version,
             exportedAt = obj.get("exportedAt")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L,
             accounts = accounts,
+            providers = decodeProviders(obj),
         )
+    }
+
+    /**
+     * 解析 `providers` 段。缺失或格式不对一律给空表，**不抛异常**——
+     * 老备份没有这一段是正常情况（v1 文件本来就只有 accounts），
+     * 为一段可选内容把整份备份判成非法，等于让老用户的备份全部作废。
+     */
+    private fun decodeProviders(root: JsonObject): List<TransferProvider> {
+        val arr = root.get("providers")?.takeIf { it.isJsonArray }?.asJsonArray ?: return emptyList()
+        val out = ArrayList<TransferProvider>(arr.size())
+        for (element in arr) {
+            val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: continue
+            val providerId = item.stringOrNull("providerId").orEmpty()
+            val key = item.stringOrNull("key").orEmpty()
+            val baseUrl = item.stringOrNull("baseUrl").orEmpty()
+            // 三条缺一条就没法重建一个能用的供应商：短名拼 id、baseUrl 决定打到哪。
+            if (providerId.isEmpty() || key.isEmpty() || baseUrl.isEmpty()) continue
+            out.add(
+                TransferProvider(
+                    providerId = providerId,
+                    key = key,
+                    // 显示名缺失时退回短名，不要留空——空名在供应商页是一行空白，用户认不出来
+                    name = item.stringOrNull("name").orEmpty().ifEmpty { key },
+                    baseUrl = baseUrl,
+                    protocol = item.stringOrNull("protocol").orEmpty().ifEmpty { "openai" },
+                    models = strings(item.get("models")),
+                    imageModels = strings(item.get("imageModels")),
+                ),
+            )
+        }
+        return out
+    }
+
+    /** JSON 字符串数组 → List；非数组或元素不是字符串一律跳过。 */
+    private fun strings(node: com.google.gson.JsonElement?): List<String> {
+        val arr = node?.takeIf { it.isJsonArray }?.asJsonArray ?: return emptyList()
+        return arr.mapNotNull { el ->
+            runCatching { el.asString }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        }
     }
 }
 
@@ -99,8 +193,10 @@ data class AccountImportResult(
     val added: List<String>,
     val updated: List<String>,
     val skipped: List<String>,
-    /** providerId 未注册（如导入了别人机器上独有的供应商）。 */
+    /** providerId 未注册且包里也没带定义——真正导不进去的那些。 */
     val unknownProviders: List<String>,
+    /** 本次导入顺带补齐的自定义供应商（`custom:*`）。 */
+    val adoptedProviders: List<String> = emptyList(),
 ) {
     val total: Int get() = added.size + updated.size + skipped.size + unknownProviders.size
 }

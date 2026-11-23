@@ -6,6 +6,7 @@ import dev.aigw.core.pool.AccountPool
 import dev.aigw.core.pool.AccountStatus
 import dev.aigw.core.pool.AccountTransfer
 import dev.aigw.core.pool.PoolSummary
+import dev.aigw.core.pool.TransferProvider
 import dev.aigw.core.provider.ACTION_CHECKIN
 import dev.aigw.core.provider.AuthKind
 import dev.aigw.core.provider.CreditInfo
@@ -995,18 +996,61 @@ class GatewayEngine(
      * 导出账号（含明文凭证）。[selection] 是 `providerId/uid` 集合，空集合表示全部。
      *
      * 只取当前确实在池里的账号：勾选后又被删掉的不会凭空出现在导出内容里。
+     *
+     * **同时带上这些账号所属的自定义供应商定义**。不带的话，`custom:*` 账号到了
+     * 另一台机器上必然「未识别」——那边没有 `baseUrl`，重建不出一个能用的供应商。
+     * 这曾经是「跨机迁移少一个号」的根因，不是设计取舍。
      */
     fun exportAccounts(selection: Set<String> = emptySet()): String {
         val all = pool.accounts()
         val picked = if (selection.isEmpty()) all else all.filter { "${it.providerId}/${it.uid}" in selection }
-        return AccountTransfer.encode(picked.sortedWith(compareBy({ it.providerId }, { it.uid })), nowMillis())
+        return AccountTransfer.encode(
+            accounts = picked.sortedWith(compareBy({ it.providerId }, { it.uid })),
+            exportedAt = nowMillis(),
+            providers = transferProvidersOf(picked),
+        )
+    }
+
+    /**
+     * 取出这批账号涉及的自定义供应商定义。
+     *
+     * 从**当前已加载的配置**里挑，不从 registry 反推：registry 里的 CustomProvider
+     * 只暴露 id/displayName/models，没有 baseUrl 与 protocol，
+     * 而这两项恰恰是重建供应商必需的。
+     *
+     * 只挑 `picked` 里真的出现过的 providerId——导出单个账号时不该把别的供应商
+     * 一起塞进包里，那等于把不相干的服务地址也带走了。
+     */
+    private fun transferProvidersOf(picked: List<ProviderAccount>): List<TransferProvider> {
+        val wanted = picked.map { it.providerId }.filter { it.startsWith(CUSTOM_PREFIX) }.toSet()
+        if (wanted.isEmpty()) return emptyList()
+        val configs = runCatching { settingsRepository.loadCustomProviders() }.getOrDefault(emptyList())
+        return configs.filter { it.providerId in wanted }.map { c ->
+            TransferProvider(
+                providerId = c.providerId,
+                key = c.key,
+                name = c.name,
+                baseUrl = c.baseUrl,
+                protocol = c.protocol,
+                models = c.models,
+                imageModels = c.imageModels,
+            )
+        }
     }
 
     /**
      * 导入账号。
      *
      * [overwrite] 为 true 时同 (providerId, uid) 的已有账号被覆盖（凭证与昵称），否则跳过。
-     * 未注册的 providerId 不落池，单独报出来——否则会存下一个永远选不了号的死账号。
+     *
+     * **`custom:*` 供应商会自动重建**：包里带着供应商定义（key / baseUrl / 协议 / 模型），
+     * 遇到目标机上没有的，先落配置 + 注册进 registry，账号才进得去。
+     * 不这么做的话，自定义供应商的账号在任何新机器上都只能算「未识别」——
+     * 那是跨机迁移少一个号的根因，不是可以接受的设计取舍。
+     *
+     * 内置供应商（codebuddy / trae / raccoon / …）配置在代码里，不需要搬。
+     * 真正注册不上的 providerId 仍单独报出来，不静默丢。
+     *
      * [selection] 是 `providerId/uid` 集合，空集合表示导入文件里的全部账号。
      */
     fun importAccounts(
@@ -1020,6 +1064,11 @@ class GatewayEngine(
         } else {
             envelope.accounts.filter { "${it.providerId}/${it.uid}" in selection }
         }
+
+        // 先把包里带来的自定义供应商补齐（只补缺的，不覆盖本机已有的配置）。
+        // 必须在下面 registry.get 之前做：否则 custom:* 账号一律被判未识别。
+        val adopted = adoptTransferProviders(envelope.providers, picked.map { it.providerId }.toSet())
+
         val added = ArrayList<String>()
         val updated = ArrayList<String>()
         val skipped = ArrayList<String>()
@@ -1043,13 +1092,61 @@ class GatewayEngine(
                 else -> skipped.add(key)
             }
         }
-        if (added.isNotEmpty() || updated.isNotEmpty()) {
+        if (adopted.isNotEmpty()) {
+            onLog("导入时自动补齐自定义供应商：${adopted.joinToString("、")}")
+        }
+        if (added.isNotEmpty() || updated.isNotEmpty() || adopted.isNotEmpty()) {
             onLog("账号导入：新增 ${added.size}、覆盖 ${updated.size}、跳过 ${skipped.size}")
             // 批量导入是「用户主动搬数据」，必须让回调跑：否则 Auto 链不重建、
             // 账号保险柜也不会在导入后立刻留一份（那是用户最需要留痕的时刻）。
             onAccountsChanged?.invoke()
         }
-        return AccountImportResult(added = added, updated = updated, skipped = skipped, unknownProviders = unknown)
+        return AccountImportResult(
+            added = added,
+            updated = updated,
+            skipped = skipped,
+            unknownProviders = unknown,
+            adoptedProviders = adopted,
+        )
+    }
+
+    /**
+     * 把包里带来的自定义供应商登记进来。返回**实际新建**的 providerId 列表。
+     *
+     * 三条约定：
+     * 1. **本机已有同 providerId 的配置就不动**。用户在自己机器上调过 baseUrl 或
+     *    改过模型列表，不该被另一台机器的备份覆盖——导入账号的目的不是重配供应商。
+     * 2. **`apiKeys` 一律留空**。明文 key 已经在账号条目里，配置里再写一份会让
+     *    `syncCustomAccounts` 按配置增删账号池，把用户自己另加的 key 当多余项删掉。
+     * 3. 落盘后必须 `saveCustomProviders` + `reloadCustomProviders`，
+     *    只改内存不写盘，重启就丢；只写盘不 reload，`registry.get` 立刻查不到。
+     */
+    private fun adoptTransferProviders(
+        providers: List<TransferProvider>,
+        neededBy: Set<String>,
+    ): List<String> {
+        if (providers.isEmpty()) return emptyList()
+        val existing = runCatching { settingsRepository.loadCustomProviders() }.getOrDefault(emptyList())
+        val existingIds = existing.map { it.providerId }.toSet()
+        val toAdd = providers.filter { it.providerId in neededBy && it.providerId !in existingIds }
+        if (toAdd.isEmpty()) return emptyList()
+
+        val configs = toAdd.map { p ->
+            CustomProviderConfig(
+                key = p.key,
+                name = p.name,
+                baseUrl = p.baseUrl,
+                // 空表：见上面第 2 条。账号由本函数下面的 importAccounts 直接 upsert。
+                apiKeys = emptyList(),
+                protocol = p.protocol,
+                models = p.models,
+                imageModels = p.imageModels,
+            )
+        }
+        runCatching { settingsRepository.saveCustomProviders(existing + configs) }
+            .onFailure { onLog("补齐自定义供应商写盘失败：${it.message}") }
+        reloadCustomProviders()
+        return configs.map { it.providerId }
     }
 
     /** 解析导出内容（只读、不落池），供导入前预览与勾选。 */

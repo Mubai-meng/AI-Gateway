@@ -528,6 +528,11 @@ internal class UiRoutes(private val host: EngineHost) {
             append("新增 ${r.added.size}")
             if (r.updated.isNotEmpty()) append("、覆盖 ${r.updated.size}")
             if (r.skipped.isNotEmpty()) append("、跳过 ${r.skipped.size}")
+            // 自动补齐的自定义供应商要说出来：用户看到「新增 13」而不是「12 + 1 未识别」，
+            // 才知道那个 custom 号真的搬过来了，而不是被悄悄丢掉。
+            if (r.adoptedProviders.isNotEmpty()) {
+                append("、自动补齐供应商 ${r.adoptedProviders.size}（${r.adoptedProviders.joinToString("/")}）")
+            }
             if (r.unknownProviders.isNotEmpty()) {
                 val ids = r.unknownProviders.map { it.substringBefore('/') }.toSortedSet()
                 append("、未识别的供应商 ${r.unknownProviders.size}（${ids.joinToString("/")}）")
@@ -546,6 +551,7 @@ internal class UiRoutes(private val host: EngineHost) {
             addProperty("updated", r.updated.size)
             addProperty("skipped", r.skipped.size)
             addProperty("unknown", r.unknownProviders.size)
+            addProperty("adopted", r.adoptedProviders.size)
         }
     }
 
