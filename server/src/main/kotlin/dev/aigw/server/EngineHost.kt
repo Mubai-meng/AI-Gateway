@@ -69,6 +69,60 @@ class EngineHost(
      */
     internal val backup: BackupManager = BackupManager(dataDir)
 
+    /**
+     * 自动备份：账号变了就写一份**整库**快照到默认备份目录（不跟用户手选的目录走）。
+     *
+     * 用户定的口径：手动备份要能自己挑文件夹，自动备份不用挑、固定写默认位置。
+     *
+     * 触发点只有两个：启动一次（[autoBackupNow]）、账号变更后 3 秒合并一次
+     * （[autoBackupSoon]，登录/导入/删除/刷新 token 全走 onAccountsChanged 这一个回调）。
+     * 用指纹去重：账号没变就不写，否则 token 每刷一次就落一份，10 份历史全成「最近几秒」。
+     */
+    private val autoBackupExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "aigw-auto-backup").apply { isDaemon = true }
+    }
+
+    private val autoBackupPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 启动时同步写一次。返回给启动日志用的一句话，null 表示跳过（账号池为空/没变化）。 */
+    fun autoBackupNow(): String? {
+        val fp = accountsFingerprint() ?: return null
+        val r = backup.autoSnapshot(fp) ?: return null
+        return "自动备份：${r.str("name")}（${r.str("message")}）"
+    }
+
+    /** 账号变更后延迟合并写一次。 */
+    fun autoBackupSoon(delayMillis: Long = 3000) {
+        if (!autoBackupPending.compareAndSet(false, true)) return
+        autoBackupExecutor.execute {
+            try {
+                Thread.sleep(delayMillis)
+                autoBackupPending.set(false)
+                autoBackupNow()
+            } catch (_: Exception) {
+                // 备份失败不能让进程崩：原因已经写在响应里，界面能从列表看出有没有新包
+            } finally {
+                autoBackupPending.set(false)
+            }
+        }
+    }
+
+    /**
+     * 账号集合指纹（providerId + uid + 凭证的 sha256）。
+     *
+     * 用导出信封里的 `accounts` 数组算，**不含 `exportedAt`**——那是每次调用都变的
+     * 时间戳，带上它指纹永远不相等，等于没有去重。
+     */
+    private fun accountsFingerprint(): String? = runCatching {
+        val payload = engine.exportAccounts()
+        val accounts = JsonParser.parseString(payload).asJsonObject
+            .get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+        if (accounts.size() == 0) return null
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.digest(accounts.toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+
     /** 写操作串行锁。 */
     private val writeLock = Any()
 

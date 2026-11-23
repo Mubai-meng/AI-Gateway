@@ -104,6 +104,43 @@ internal class BackupManager(private val dataDir: File) {
     // ---------------------------------------------------------------- 创建
 
     /**
+     * 写一份**自动**备份：固定落默认目录，不需要（也不允许）用户选地方。
+     *
+     * 触发时机由 EngineHost 管（启动一次、账号变更后 3 秒合并一次）。
+     *
+     * @param fingerprint 账号集合指纹。一样就跳过——自动刷新 token 会频繁触发，
+     *   每次都落一份会把 10 份历史全刷成「最近几秒」，真出事时反而没有时间纵深。
+     */
+    fun autoSnapshot(fingerprint: String): JsonObject? {
+        if (fingerprint.isBlank()) return null
+        if (fingerprint == readFingerprint()) return null
+        val r = create(dir = backupDir, auto = true)
+        if (r.get("ok")?.asBoolean != true) return null
+        writeFingerprint(fingerprint)
+        rotateAuto()
+        return r
+    }
+
+    /** 自动备份只留最近 [AUTO_KEEP] 份；手动备份一份都不删。 */
+    private fun rotateAuto() {
+        val autos = dirList().flatMap { d ->
+            d.listFiles { f -> f.isFile && f.name.startsWith("$AUTO_PREFIX-") && f.name.endsWith(".zip") }
+                ?.toList().orEmpty()
+        }.sortedByDescending { readManifest(it)?.first ?: it.lastModified() }
+        autos.drop(AUTO_KEEP).forEach { runCatching { it.delete() } }
+    }
+
+    /** 上次自动备份对应的账号指纹。放在数据目录里，不进备份包。 */
+    private val fingerprintFile: File = File(dataDir, ".auto-backup-fingerprint")
+
+    private fun readFingerprint(): String =
+        runCatching { fingerprintFile.takeIf { it.isFile }?.readText()?.trim().orEmpty() }.getOrDefault("")
+
+    private fun writeFingerprint(fp: String) {
+        runCatching { fingerprintFile.writeText(fp, Charsets.UTF_8) }
+    }
+
+    /**
      * 创建一份备份。
      *
      * 包内 `secure/` 条目是**明文**（`encrypted: false` 写进清单）。个人自用工具，
@@ -118,7 +155,7 @@ internal class BackupManager(private val dataDir: File) {
      * @param dir 用户点「浏览…」选定的目录；null 表示用上次那个（默认备份目录）。
      *   成功后会记住这个目录，下次列表里仍然看得到它。
      */
-    fun create(dir: File? = null): JsonObject {
+    fun create(dir: File? = null, auto: Boolean = false): JsonObject {
         val outDir = dir?.absoluteFile ?: currentDir()
         outDir.mkdirs()
         if (!outDir.isDirectory) {
@@ -129,7 +166,7 @@ internal class BackupManager(private val dataDir: File) {
         // 同一秒内连点两次会撞名，而 renameTo 在这条路径上**不覆盖**（Windows 上返回 false，
         // 代码随后 copyTo(overwrite=true) 就把上一份删了）——实测连点两次只剩一份。
         // 名字里带序号，保证每次创建都是新文件。
-        val name = uniqueName(outDir, "aigw-backup-$stamp")
+        val name = uniqueName(outDir, (if (auto) AUTO_PREFIX else MANUAL_PREFIX) + "-$stamp")
         val target = File(outDir, name)
         val tmp = File(outDir, "$name.tmp")
 
@@ -174,7 +211,9 @@ internal class BackupManager(private val dataDir: File) {
             return resultJson(false, "备份失败：${e.javaClass.simpleName}: ${e.message}")
         }
 
-        dirs.remember(outDir)
+        // 只有手动备份才记「用户选过哪个目录」：自动备份固定写默认目录，
+        // 记进去会让界面以为用户已经选过位置，下次点「立即备份」就不弹窗了。
+        if (!auto) dirs.remember(outDir)
         return JsonObject().apply {
             addProperty("ok", true)
             addProperty("message", "已备份 $entries 个条目（${sizeText(target.length())}）")
@@ -252,12 +291,17 @@ internal class BackupManager(private val dataDir: File) {
                 // 老包的清单里可能是 true（那时还没禁止调用记录）。界面据此提示
                 // 「这份是旧包、含调用记录」——新包一律 false。
                 addProperty("includeCallLogs", info?.second?.get("includeCallLogs")?.takeIf { !it.isJsonNull }?.asBoolean ?: false)
+                addProperty("auto", isAuto(f))
             })
         }
         val top = snapshotTopLevel()
         return JsonObject().apply {
             addProperty("ok", true)
             addProperty("dir", currentDir().absolutePath)
+            // 自动备份固定写这里（不跟用户手选的目录走）
+            addProperty("autoDir", backupDir.absolutePath)
+            // 用户**显式选过**的目录；空串表示还没选过 → 前端第一次点「立即备份」时才弹窗
+            addProperty("chosenDir", dirs.chosen()?.absolutePath ?: "")
             add("dirs", JsonArray().apply { dirList().forEach { add(it.absolutePath) } })
             addProperty("count", arr.size())
             add("items", arr)
@@ -276,9 +320,30 @@ internal class BackupManager(private val dataDir: File) {
      */
     private fun scanBackups(): List<File> =
         dirList().flatMap { d ->
-            d.listFiles { f -> f.isFile && f.name.startsWith("aigw-backup-") && f.name.endsWith(".zip") }
-                ?.toList().orEmpty()
+            d.listFiles { f ->
+                f.isFile && (f.name.startsWith("$MANUAL_PREFIX-") || f.name.startsWith("$AUTO_PREFIX-")) &&
+                    f.name.endsWith(".zip")
+            }?.toList().orEmpty()
         }.sortedByDescending { readManifest(it)?.first ?: it.lastModified() }
+
+    /** 条目是不是自动备份。名前缀是权威判据（目录可能被用户手工挪过）。 */
+    private fun isAuto(file: File): Boolean = file.name.startsWith("$AUTO_PREFIX-")
+
+    /**
+     * 改「手动备份存到哪」——只记目录，不写备份。
+     *
+     * 界面上是备份列表里那句「手动：<路径> 改」，点开选完就走这里。
+     * 不传空：空目录没有意义，用户想回默认就选那个默认目录。
+     */
+    fun setTarget(dir: File?): JsonObject {
+        if (dir == null) return resultJson(false, "目录无效")
+        dirs.remember(dir)
+        return JsonObject().apply {
+            addProperty("ok", true)
+            addProperty("message", "手动备份将存到 ${dir.absolutePath}")
+            addProperty("dir", dir.absolutePath)
+        }
+    }
 
     /** 按名字在所有已知目录里定位（删除/恢复用）。 */
     private fun find(name: String): File? {
@@ -581,6 +646,15 @@ internal class BackupManager(private val dataDir: File) {
     }.getOrNull()
 
     companion object {
+        /** 手动备份前缀。老包也叫这个，改不得（改了历史包会从列表里消失）。 */
+        const val MANUAL_PREFIX = "aigw-backup"
+
+        /** 自动备份前缀：`aigw-auto-20261123-101500.zip`。 */
+        const val AUTO_PREFIX = "aigw-auto"
+
+        /** 自动备份保留份数。手动备份不轮转。 */
+        const val AUTO_KEEP = 10
+
         /** 清单条目名。带 `aigw-` 前缀避免与数据目录里任何真实文件名冲突。 */
         const val MANIFEST_NAME = "aigw-backup-manifest.json"
 

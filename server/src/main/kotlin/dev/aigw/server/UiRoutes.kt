@@ -143,6 +143,17 @@ internal class UiRoutes(private val host: EngineHost) {
                 UiOut.Json(host.backup.create(dir))
             }
         },
+        "/ui/backup/target" to { req ->
+            ensurePost(req)
+            // 只改「手动备份存到哪」，不写备份。空串=回默认目录。
+            val raw = req.str("dir")
+            val dir = host.backup.parseDir(raw)
+            if (raw.isNotBlank() && dir == null) {
+                UiOut.Json(resultJson(false, "目录必须是完整路径（例如 D:\\备份）：$raw"))
+            } else {
+                UiOut.Json(host.backup.setTarget(dir))
+            }
+        },
         "/ui/backup/delete" to { req ->
             ensurePost(req)
             UiOut.Json(host.backup.delete(req.requireStr("name", "备份名")))

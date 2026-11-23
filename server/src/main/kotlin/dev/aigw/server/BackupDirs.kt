@@ -36,6 +36,15 @@ internal class BackupDirs(
     /** 默认目录（安装目录 / 数据目录旁）。**永远存在，永远在清单里**。 */
     fun defaultDir(): File = defaultDir.absoluteFile
 
+    /**
+     * 用户**显式选过**的目录；没选过返回 null。
+     *
+     * 与 [primary] 的区别：primary 在没有记录时回落到默认目录，而界面要据此决定
+     * 「这是第一次点立即备份，得先问存哪儿」。只有 remember() 过的才算选过。
+     */
+    fun chosen(): File? = recent.firstOrNull { it.absoluteFile != defaultDir().absoluteFile }
+        ?: recent.firstOrNull { it.absoluteFile == defaultDir().absoluteFile }
+
     /** 上次用的目录；没有记录时就是默认目录。 */
     fun primary(): File = recent.firstOrNull() ?: defaultDir()
 

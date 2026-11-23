@@ -256,6 +256,37 @@ class BackupCodecTest {
         assertFalse(File(dataDir, BackupManager.KEEP_LOGS_DIR).exists(), "临时落脚点要清理掉")
     }
 
+    /**
+     * 自动备份：固定落默认目录、同指纹不重复写、只留 10 份，且不掺手动包。
+     *
+     * 自动备份是「账号变了才存」的东西：token 自动刷新会频繁触发回调，
+     * 不去重的话 10 份历史全变成「最近几秒」，真出事时没有时间纵深。
+     */
+    @Test
+    fun `自动备份去重并按十份轮转`() {
+        val dataDir = tempDir()
+        val secure = File(dataDir, "secure").also { it.mkdirs() }
+        File(dataDir, "master.key").writeBytes(newKey())
+        File(secure, "acc").writeText("keep")
+        val bm = BackupManager(dataDir)
+
+        val first = bm.autoSnapshot("fp-1")
+        requireNotNull(first) { "首次自动备份应成功" }
+        assertTrue(first.get("name").asString.startsWith(BackupManager.AUTO_PREFIX), first.get("name").asString)
+        assertEquals(bm.backupDir.absoluteFile, File(first.get("path").asString).parentFile.absoluteFile,
+            "自动备份必须落默认目录，不能跟用户手选的目录走")
+
+        assertNull(bm.autoSnapshot("fp-1"), "同指纹不该重复写")
+        assertEquals(1, File(bm.backupDir, "").listFiles { f -> f.name.startsWith(BackupManager.AUTO_PREFIX) }!!.size)
+
+        // 换 12 个指纹：自动包应只留 10 份，手动包一份都不动
+        val manual = bm.create()
+        for (i in 2..12) bm.autoSnapshot("fp-$i")
+        val autos = File(bm.backupDir, "").listFiles { f -> f.name.startsWith(BackupManager.AUTO_PREFIX) }!!
+        assertEquals(BackupManager.AUTO_KEEP, autos.size, "自动备份应轮转到 ${BackupManager.AUTO_KEEP} 份")
+        assertTrue(File(bm.backupDir, manual.get("name").asString).isFile, "手动备份不该被自动轮转删掉")
+    }
+
     @Test
     fun `清单里的 entryCount 与实际条目数一致`() {
         val dataDir = tempDir()

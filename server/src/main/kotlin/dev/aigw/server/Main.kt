@@ -72,8 +72,16 @@ fun main(args: Array<String>) {
         it.engine.migrateAccounts()
     }
 
+    // 自动备份：启动写一份（账号没变则跳过），之后由 onAccountsChanged 触发。
+    // 放在 migrateAccounts() 之后：迁移把旧 uid 口径修完，快照记的才是能用的账号。
+    runCatching { host.autoBackupNow() }.getOrNull()?.let {
+        if (it.isNotEmpty()) println("[aigw-server] $it")
+    }
+
     // 账号池变化后只清理 Auto 链里失效的候选，不打乱用户手动排好的顺序
     host.engine.onAccountsChanged = {
+        // 账号变了 → 3 秒后合并写一份自动备份（登录/导入/删除/刷新 token 全覆盖）
+        host.autoBackupSoon()
         if (host.autoRoute.enabled()) {
             Thread { runCatching { host.autoRoute.pruneInvalid() } }.apply {
                 isDaemon = true

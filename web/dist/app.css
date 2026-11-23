@@ -980,6 +980,14 @@ body.gate-locked { overscroll-behavior: none; }
 /* 失败信息用错误色，成功信息保持 muted —— 两者不能长得一样。 */
 .err-text { color: var(--err); }
 
+/* ---- 备份列表上方两行落点（自动固定 / 手动可改） ----
+   内容区只有 602px：路径必须能折行，否则长路径会把「改」按钮顶出可视区。 */
+.dir-line { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.dir-line .mono { word-break: break-all; }
+/* .mini-btn 本体是 display:grid（图标按钮），放进文字行会独占一行，
+   这里必须改成 inline-grid，否则「改」会掉到路径下面一行。 */
+.dir-line .mini-btn { display: inline-grid; margin-left: 4px; vertical-align: middle; }
+
 /* ---- 「目标文件夹」输入行：输入框吃满余量，浏览按钮固定宽 ----
    内容区只有 602px，按钮写死 padding 而不写 min-width，避免把输入框挤到看不见路径。 */
 .path-row { display: flex; gap: 8px; align-items: center; }

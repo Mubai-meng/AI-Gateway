@@ -5024,23 +5024,48 @@ function renderBackup() {
   // ---- 备份列表
   const items = d.items || [];
   const card = el('div', 'card');
-  card.appendChild(headWith('备份列表', `${items.length} 份 · ${d.dir}`));
+  card.appendChild(headWith('备份列表', `${items.length} 份`));
+
+  // ---- 两个落点：自动的固定，手动的可改（用户要求：改地址只能从这里点）
+  const dirLine = el('div', 'dir-line');
+  dirLine.appendChild(el('span', 'desc mono selectable', `自动：${d.autoDir || '—'}`));
+  const manualDirWrap = el('span', 'desc mono');
+  manualDirWrap.append(document.createTextNode(`手动：${d.chosenDir || d.dir}`));
+  const bChange = el('button', 'mini-btn wide', '改');
+  bChange.id = 'btnChangeBackupDir';
+  bChange.title = '改「手动备份」存到哪个文件夹（自动备份固定写在上面那个目录）';
+  bChange.addEventListener('click', async () => {
+    const picked = await askFolder('手动备份存到哪儿', d.chosenDir || d.dir || '');
+    if (picked === null) return;
+    setBtnBusy(bChange, true, '…');
+    const r = await api.post('/ui/backup/target', { dir: picked });
+    setBtnBusy(bChange, false, '');
+    toast(r.ok ? r.message : '改目录失败：' + r.message, r.ok ? 'ok' : 'err', 5000);
+    if (r.ok) { await loadBackup(); if (S.page === 'backup') renderPage(); }
+  });
+  manualDirWrap.appendChild(document.createTextNode(' '));
+  manualDirWrap.appendChild(bChange);
+  dirLine.appendChild(manualDirWrap);
+  const cardBody = el('div', 'card-body pad-top');
+  cardBody.appendChild(dirLine)
+  card.appendChild(cardBody);
+
   const wrap = el('div', 'table-wrap');
   const table = el('table', 'grid grid-fixed compact');
   table.id = 'tblBackup';
-  // 5 列、内容区 602px：时间 96 / 大小 66 / 条目 44 / 版本 52 / 操作 余量。
-  // 列宽按最长真实值量（「11-20 00:22」≈ 76、「2.4 MB」= 46、「0.9.9」= 34），
-  // 留出内边距后加起来约 258，剩下的全给操作列——两个按钮在 90px 里放得下。
+  // 6 列、内容区 602px：时间 88 / 方式 44 / 大小 60 / 条目 40 / 版本 48 / 操作 余量。
+  // 「自动/手动」必须单独一列：两种包混在一张表里，看不出哪个是系统自己写的，
+  // 用户就不会知道哪些可以随手删、哪些是唯一的时间纵深。
   table.innerHTML = `<thead><tr>
-    <th style="width:96px">创建时间</th><th style="width:66px">体积</th>
-    <th class="num" style="width:44px">条目</th><th style="width:52px">版本</th>
-    <th style="width:96px">操作</th>
+    <th style="width:88px">创建时间</th><th style="width:44px">方式</th>
+    <th style="width:60px">体积</th><th class="num" style="width:40px">条目</th>
+    <th style="width:48px">版本</th><th>操作</th>
   </tr></thead>`;
   const tbody = el('tbody');
   if (items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty">
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">
       <span class="big">还没有备份</span>
-      <span>点右上角「立即备份」，可以自己选存到哪个文件夹</span></div></td></tr>`;
+      <span>点右上角「立即备份」；第一次会让你选存到哪个文件夹</span></div></td></tr>`;
   } else {
     items.forEach((it) => {
       const tr = el('tr');
@@ -5053,6 +5078,7 @@ function renderBackup() {
         + `${p2(when.getHours())}:${p2(when.getMinutes())}`;
       tr.innerHTML = `
         <td class="cell-muted mono">${esc(whenText)}</td>
+        <td class="cell-muted">${it.auto ? '自动' : '手动'}</td>
         <td class="cell-muted">${esc(it.sizeText || '—')}</td>
         <td class="num cell-muted">${it.entryCount || 0}</td>
         <td class="cell-muted">${esc(it.appVersion || '—')}</td>
@@ -5085,12 +5111,17 @@ function renderBackup() {
 /**
  * 立即备份。
  *
- * 先问存到哪儿（默认上次那个目录，留空=默认位置），再发请求。
- * 上一次的目录由服务端记住，所以第二次点基本是「回车确认」两下。
+ * **只有第一次才问存到哪儿**：服务端记着用户选过的目录（`chosenDir`），
+ * 之后每点一次直接写，不再弹窗——用户明确要求"别每次点都自己弹出来"。
+ * 要换地方就点列表上方那句「手动：<路径> 改」。
  */
 async function createBackup(btn) {
-  const dir = await askFolder('备份到哪儿', (S.backupList && S.backupList.dir) || '');
-  if (dir === null) return;
+  let dir = (S.backupList && S.backupList.chosenDir) || '';
+  if (!dir) {
+    const picked = await askFolder('手动备份存到哪儿', (S.backupList && S.backupList.autoDir) || '');
+    if (picked === null) return;
+    dir = picked;
+  }
   setBtnBusy(btn, true, '备份中…');
   const r = await api.post('/ui/backup/create', dir ? { dir } : {}, 60000);
   setBtnBusy(btn, false, '');
