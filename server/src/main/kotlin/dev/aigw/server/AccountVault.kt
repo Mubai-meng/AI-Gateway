@@ -239,7 +239,12 @@ internal class AccountVault(
      * token 轮换也会算变更（那是必须保住的），但只是刷新额度不算。
      */
     fun writeIfChanged(payload: String, reason: String, appVersion: String): File? {
-        val newest = scanAuto().firstOrNull { it.reason != REASON_UPGRADE }
+        // 只跟**当前落点目录**里的最新一份比。老版本换过两次落点
+        // （`<dataDir>/../account-vault` → `%TEMP%\aigw-account-vault`）：
+        // 若拿老目录里那份来比，内容一样就不写，新目录会一直是空的——
+        // 界面上「自动：<新路径>」下面什么都没有，看起来像自动备份坏了。
+        // 换落点后第一件事就是在当前位置留一份，之后内容不变就不再写。
+        val newest = scanDir(vaultDir, AUTO_PREFIX).firstOrNull { it.reason != REASON_UPGRADE }
         if (newest != null && sameAccounts(newest.file, payload)) return null
         return writeAuto(payload, reason, appVersion)
     }
