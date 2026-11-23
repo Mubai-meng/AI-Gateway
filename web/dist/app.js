@@ -3344,7 +3344,7 @@ function buildGroupTable() {
 
   const tbody = el('tbody');
   if (mine.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty">
       <span class="big">还没有自建路由组</span>
       <span>点右上角「新建组」，把几个模型合成一个对外模型名</span></div></td></tr>`;
   } else {
@@ -5022,18 +5022,21 @@ function renderBackup() {
   }
 
   // ---- 备份列表
-  const items = d.items || [];
-  const card = el('div', 'card');
-  card.appendChild(headWith('备份列表', `${items.length} 份`));
+  // 自动备份不进来：它固定存默认目录、由系统自己写，列出来只占位置。
+  // 想恢复它就到那个目录里手动挑文件（「从文件恢复」）。
+  const items = (d.items || []).filter((x) => !x.auto);
 
-  // ---- 两个落点：自动的固定，手动的可改（用户要求：改地址只能从这里点）
-  const dirLine = el('div', 'dir-line');
-  dirLine.appendChild(el('span', 'desc mono selectable', `自动：${d.autoDir || '—'}`));
-  const manualDirWrap = el('span', 'desc mono');
-  manualDirWrap.append(document.createTextNode(`手动：${d.chosenDir || d.dir}`));
+  // ---- 头部一行：左「备份列表」，右「手动存到：<路径> [改]」
+  // 用户要求地址放标题同一行，别单独占一行——放下面既挤又看不出来能点。
+  const card = el('div', 'card');
+  const head = el('div', 'card-head');
+  head.appendChild(el('h3', '', `备份列表 · ${items.length} 份`));
+  const dirWrap = el('span', 'hint dir-inline');
+  dirWrap.appendChild(document.createTextNode('手动存到：'));
+  dirWrap.appendChild(el('span', 'mono selectable', d.chosenDir || d.dir || '—'));
   const bChange = el('button', 'mini-btn wide', '改');
   bChange.id = 'btnChangeBackupDir';
-  bChange.title = '改「手动备份」存到哪个文件夹（自动备份固定写在上面那个目录）';
+  bChange.title = '改「手动备份」存到哪个文件夹';
   bChange.addEventListener('click', async () => {
     const picked = await askFolder('手动备份存到哪儿', d.chosenDir || d.dir || '');
     if (picked === null) return;
@@ -5043,23 +5046,19 @@ function renderBackup() {
     toast(r.ok ? r.message : '改目录失败：' + r.message, r.ok ? 'ok' : 'err', 5000);
     if (r.ok) { await loadBackup(); if (S.page === 'backup') renderPage(); }
   });
-  manualDirWrap.appendChild(document.createTextNode(' '));
-  manualDirWrap.appendChild(bChange);
-  dirLine.appendChild(manualDirWrap);
-  const cardBody = el('div', 'card-body pad-top');
-  cardBody.appendChild(dirLine)
-  card.appendChild(cardBody);
+  dirWrap.appendChild(document.createTextNode(' '));
+  dirWrap.appendChild(bChange);
+  head.appendChild(dirWrap);
+  card.appendChild(head);
 
   const wrap = el('div', 'table-wrap');
   const table = el('table', 'grid grid-fixed compact');
   table.id = 'tblBackup';
-  // 6 列、内容区 602px：时间 88 / 方式 44 / 大小 60 / 条目 40 / 版本 48 / 操作 余量。
-  // 「自动/手动」必须单独一列：两种包混在一张表里，看不出哪个是系统自己写的，
-  // 用户就不会知道哪些可以随手删、哪些是唯一的时间纵深。
+  // 5 列、内容区 602px：时间 92 / 大小 64 / 条目 44 / 版本 52 / 操作 余量。
   table.innerHTML = `<thead><tr>
-    <th style="width:88px">创建时间</th><th style="width:44px">方式</th>
-    <th style="width:60px">体积</th><th class="num" style="width:40px">条目</th>
-    <th style="width:48px">版本</th><th>操作</th>
+    <th style="width:92px">创建时间</th><th style="width:64px">体积</th>
+    <th class="num" style="width:44px">条目</th><th style="width:52px">版本</th>
+    <th>操作</th>
   </tr></thead>`;
   const tbody = el('tbody');
   if (items.length === 0) {
@@ -5078,7 +5077,6 @@ function renderBackup() {
         + `${p2(when.getHours())}:${p2(when.getMinutes())}`;
       tr.innerHTML = `
         <td class="cell-muted mono">${esc(whenText)}</td>
-        <td class="cell-muted">${it.auto ? '自动' : '手动'}</td>
         <td class="cell-muted">${esc(it.sizeText || '—')}</td>
         <td class="num cell-muted">${it.entryCount || 0}</td>
         <td class="cell-muted">${esc(it.appVersion || '—')}</td>
