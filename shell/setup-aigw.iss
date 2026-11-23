@@ -1,12 +1,15 @@
-; AI Gateway 0.9.9 安装包定义
+; AI Gateway __VER__ 安装包定义
 ;
 ; 由 build-installer.ps1 生成产物，**不写 LicenseFile**：用户要求安装包里不带授权文件。
 ; 安装流程刻意压到三步：选目录 → 安装 → 完成（DisableProgramGroupPage 去掉程序组页）。
+; 版本号写 __VER__ 占位符，由 build-installer.ps1 的 $VER 注入——原先这里写死
+; 0.9.9，与脚本 $VER 只能手工同步，漏改一次 Inno 产出 0.9.9 而脚本按 1.0.0 找文件
+; 就会抛 "installer not produced"。
 
 [Setup]
 AppId={{8E4C1A72-9F3B-4D6A-B0E7-2C9A5D1F6B83}
 AppName=AI Gateway
-AppVersion=0.9.9
+AppVersion=__VER__
 AppPublisher=AIGateway
 DefaultDirName={autopf}\AI Gateway
 DefaultGroupName=AI Gateway
@@ -18,7 +21,7 @@ DisableDirPage=no
 ; 重装时记住上次选的目录（升级不必每次重挑）
 UsePreviousAppDir=yes
 OutputDir=__OUTDIR__
-OutputBaseFilename=AI-Gateway-Setup-0.9.9
+OutputBaseFilename=AI-Gateway-Setup-__VER__
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

@@ -1,4 +1,4 @@
-# AI Gateway 0.9.9 installer builder (Inno Setup exe)
+# AI Gateway 1.0.0 installer builder (Inno Setup exe)
 #
 # build-web.ps1 produces a runnable directory (build\release-web).
 # This script strips every license/readme file from that directory, then
@@ -9,12 +9,12 @@
 # "MissingEndCurlyBrace"/"MissingExpressionAfterToken" errors.
 #
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1
-# Output: build\installer\AI-Gateway-Setup-0.9.9.exe
+# Output: build\installer\AI-Gateway-Setup-1.0.0.exe
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
-$VER     = '0.9.9'
+$VER     = '1.0.0'
 $SRC     = Join-Path $PWD 'build\release-web'
 $ISCC    = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 # Output MUST live outside $SRC: putting it in $SRC\installer makes the iss
@@ -66,7 +66,8 @@ $issPath = Join-Path $OUTDIR '_setup.iss'
 $iss = (Get-Content $TEMPL -Raw -Encoding UTF8) `
     -replace '__OUTDIR__', $OUTDIR `
     -replace '__SRC__', $SRC `
-    -replace '__LANGDIR__', $LANGDIR
+    -replace '__LANGDIR__', $LANGDIR `
+    -replace '__VER__', $VER
 Set-Content -Path $issPath -Value $iss -Encoding UTF8
 
 Write-Host '[3/4] Inno Setup compile'

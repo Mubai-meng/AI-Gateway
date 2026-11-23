@@ -659,7 +659,7 @@ class EngineHost(
  * **改这里必须同步改更新源仓库的 update.json**：
  * 本值即客户端判定「是否有新版」的基准（见 [UpdateChecker]）。
  * 只升这里不升清单 → 所有已装实例立刻看到"有新版本"；只升清单不升这里 → 永远不提示。 */
-const val APP_VERSION = "0.9.9"
+const val APP_VERSION = "1.0.0"
 
 /** 账号保险柜日常快照保留份数（升级前那份另算，不参与轮转）。 */
 private const val VAULT_KEEP = 10
