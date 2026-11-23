@@ -112,6 +112,9 @@ const S = {
   media: null,
   backupList: null,
   backupLoaded: false,
+  /* 备份页「包含调用记录」开关的跨次记忆（true = 不带，包只有几十 KB）。
+     放 S 上而不是只读 DOM：切页回来时 DOM 会重建，勾选状态得从这儿恢复。 */
+  backupNoLogs: false,
   /* 账号保险柜：账号数据的自动备份。与 backupList 分开存——
      一个是整目录 zip（同机回滚），一个是账号 JSON（跨机迁移），语义不同不共用一个字段。 */
   vault: null,
@@ -733,8 +736,12 @@ function paintVersionCard(u) {
     badge.textContent = '已是最新';
   }
 
-  btnGo.hidden = !mandatory;                 // 强制态即使 hasUpdate=false 也要给出口
-  btnGo.textContent = mandatory ? '立即更新' : '下载新版';
+  // 有新版就给下载入口，不只在强制态给。
+  // 下载链接是一个固定分享**文件夹**，里面堆着多个版本的 zip —— 用户点进来
+  // 未必记得「我该拿哪个文件」，所以这里有按钮直接打开文件夹 + 副标题写明文件名，
+  // 比让他自己回忆链接、在文件夹里靠版本号猜要可靠。
+  btnGo.hidden = !(mandatory || hasUpdate);
+  btnGo.textContent = mandatory ? '立即更新' : '打开下载页';
   btnCheck.hidden = mandatory;               // 强制态只留一条口子
 
   const latest = (u && u.latest) || '';
@@ -746,7 +753,15 @@ function paintVersionCard(u) {
   } else if (failed) {
     sub.textContent = (u && u.message) || '连不上更新源，可手动打开下载页';
   } else if (hasUpdate) {
-    sub.textContent = `最新 v${latest}${notes ? ' · ' + notes : ''}`;
+    // 副标题只放「版本号 + 要下哪个文件」。
+    // 原先这里拼的是清单里的 notes，而我最近几条写了 600+ 字（实测 648 字），
+    // 塞进 602px 宽的 11.5px 副标题会撑到 13 行，把版本卡整个顶变形。
+    // 下载链接是一个固定分享**文件夹**，里面会有多个版本的 zip——
+    // 所以「文件名叫什么」比「这版改了什么」更需要出现在这里。
+    // 完整 notes 放 title（悬停可见）与强制窗（那里空间够）。
+    const dl = (u && u.downloadName) || '';
+    sub.textContent = `最新 v${latest}${dl ? ' · 下载 ' + dl : ''}`;
+    sub.title = notes ? notes : '';
   } else if (u && u.checked === false) {
     sub.textContent = '程序打开时自动检查';
   } else {
@@ -5107,10 +5122,16 @@ function renderBackup() {
 
   const actions = $('#pageActions');
   actions.innerHTML = '';
+  // 顶部动作区只放一个按钮：勾选框放这里会把「立即备份」挤成两行，
+  // 而内容区只有 602px。勾选框放到下面的「备份范围」卡片里（那里本来就讲体积）。
   const bNew = el('button', 'btn primary', '立即备份');
   bNew.id = 'btnBackupNow';
   bNew.addEventListener('click', () => createBackup(bNew));
   actions.appendChild(bNew);
+  // 勾选状态跨次进入保持：用户选过一次「不要调用记录」，下次进页面不该被重置回默认。
+  if (S.backupNoLogs === undefined) S.backupNoLogs = false;
+  bNew.title = S.backupNoLogs ? '备份时不带调用记录（包很小，但恢复后调用记录页为空）'
+    : '备份整份数据（含调用记录，包较大）';
 
   // ---- 待恢复提示：必须排在最上面，否则用户会以为"已经恢复了"
   const pending = d.pending;
@@ -5234,6 +5255,37 @@ function renderBackup() {
     '体积构成：调用记录（secure/logs/，每次对话一个 chatcmpl-* 文件）占九成以上。'
     + '这部分是唯一的大头，其余账号/设置/用量加起来只有几十 KB。'
     + '解成明文后 deflate 才压得动（压缩比从 1.00 降到 0.32），所以同一次备份从 2.2 MB 缩到 0.75 MB。'));
+
+  // ---- 调用记录开关
+  // 后端 create(includeCallLogs) 一直支持 false，但前端早先把 true 写死了，
+  // 界面文案还承诺「关掉后包会小一半」——承诺了却没有开关。这里补上。
+  // 默认带（历史行为不变）；勾掉后包从 ~750 KB 掉到 ~60 KB。
+  const sw = el('label', 'switch backup-log-switch');
+  const cb = el('input');
+  cb.type = 'checkbox';
+  cb.id = 'backupNoLogs';
+  cb.checked = !S.backupNoLogs;
+  const track = el('span', 'track');
+  const swText = el('span', null, '包含调用记录');
+  sw.append(cb, track, swText);
+  const logHint = el('p', 'desc', '');
+  const paintHint = () => {
+    logHint.textContent = cb.checked
+      ? '整包约 0.7–1 MB（100+ 个小文件）。恢复后「调用记录」页有历史。'
+      : '整包约 60 KB，只剩账号/设置/用量。恢复后「调用记录」页为空。';
+  };
+  cb.addEventListener('change', () => {
+    S.backupNoLogs = !cb.checked;
+    paintHint();
+    // 顶部按钮的 title 也要跟着说明当前口径
+    const b = $('#btnBackupNow');
+    if (b) {
+      b.title = S.backupNoLogs ? '备份时不带调用记录（包很小，但恢复后调用记录页为空）'
+        : '备份整份数据（含调用记录，包较大）';
+    }
+  });
+  paintHint();
+  ib.append(sw, logHint);
   ib.appendChild(el('p', 'desc',
     '恢复会先把当前数据整体快照一份（回滚包），再替换上面这些条目；'
     + '回滚包同样出现在列表里，恢复错了可以直接回退。'));
@@ -5246,8 +5298,10 @@ function renderBackup() {
 
 async function createBackup(btn) {
   setBtnBusy(btn, true, '备份中…');
-  // 带调用记录时整包约 2–3 MB、100+ 个小文件，给足超时
-  const r = await api.post('/ui/backup/create', { includeCallLogs: true }, 60000);
+  // includeCallLogs 由「备份范围」卡片上的开关决定（S.backupNoLogs）。
+  // 勾掉调用记录时包只有几十 KB，但不需要为此缩短超时——带的时候要 100+ 个小文件。
+  const withLogs = !S.backupNoLogs;
+  const r = await api.post('/ui/backup/create', { includeCallLogs: withLogs }, 60000);
   setBtnBusy(btn, false, '');
   if (r.ok === false) {
     toast('备份失败：' + r.message, 'err', 6000);
