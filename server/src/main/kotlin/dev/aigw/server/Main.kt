@@ -23,9 +23,10 @@ import kotlin.system.exitProcess
  *
  * 参数（外壳与开发态都用这一套）：
  * ```
- *   --data <dir>   数据目录（默认 %APPDATA%\AIGateway\data，与旧版一致，账号直接沿用）
- *   --port <n>     UI API 端口（默认按数据目录派生；显式指定时优先）
- *   --no-browser   只起服务不开浏览器（外壳自己开 WebView2 时用）
+ *   --data <dir>      数据目录（默认 %APPDATA%\AIGateway\data，与旧版一致，账号直接沿用）
+ *   --port <n>        UI API 端口（默认按数据目录派生；显式指定时优先）
+ *   --install-dir <d> 安装目录（外壳传它；手动账号备份写到 <d>\backups\）
+ *   --no-browser      只起服务不开浏览器（外壳自己开 WebView2 时用）
  * ```
  */
 private const val DEFAULT_UI_PORT = 8792
@@ -65,7 +66,7 @@ fun main(args: Array<String>) {
     val restoreNote = BackupManager(dataDir).applyPending()
     if (restoreNote != null) println("[aigw-server] $restoreNote")
 
-    val host = EngineHost(dataDir).also {
+    val host = EngineHost(dataDir, resolveInstallDir(args)).also {
         it.derived = scope.derived
         it.uiPort = uiPort
         it.engine.migrateAccounts()
@@ -393,6 +394,26 @@ private fun resolveDataDir(args: Array<String>): File {
     System.getenv("AIGW_DATA")?.let { return File(it) }
     val base = System.getenv("APPDATA") ?: System.getProperty("user.home")
     return File(base, "AIGateway/data")
+}
+
+/**
+ * 安装目录。只有外壳知道它（就是 `AI Gateway.exe` 所在目录），所以由外壳显式传。
+ *
+ * 不自己从 classpath 反推：开发态（gradlew run）与发布态（app 目录一堆 jar + runtime）
+ * 两种布局不一样，靠猜会把手动备份写到 `build/install/...` 这种用户永远找不到的地方。
+ * 拿不到就返回 null，界面会如实显示手动备份回落到哪里。
+ */
+private fun resolveInstallDir(args: Array<String>): File? {
+    val i = args.indexOf("--install-dir")
+    if (i >= 0 && i + 1 < args.size) {
+        val f = File(args[i + 1])
+        if (f.isDirectory) return f
+    }
+    System.getProperty("aigw.installDir")?.let { p ->
+        val f = File(p)
+        if (f.isDirectory) return f
+    }
+    return null
 }
 
 private fun resolvePort(args: Array<String>): Int? {

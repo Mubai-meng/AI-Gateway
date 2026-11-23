@@ -484,23 +484,24 @@ internal class UiRoutes(private val host: EngineHost) {
     }
 
     /**
-     * 立即写一份手动快照。
+     * 立即写一份**手动**备份（落安装目录 `backups/`，不参与轮转）。
      *
-     * 与「导出当前账号」的差别只有一处：这个会**落进保险柜目录**并参与轮转，
-     * 而导出只是把内容递给浏览器让用户自己存。用户点「立即快照」的动机通常是
-     * 「我要动数据了，先留一份」——所以它必须留在本地，不能只是下载。
+     * 与「导出当前账号」的差别：这个留在本地（安装目录旁边），导出只是把内容
+     * 递给浏览器让用户自己存。与自动备份的差别：手动那份不参与轮转、
+     * 不被自动备份覆盖——用户主动点出来留的东西，只有用户自己能删。
      */
     private fun vaultSnapshotNow(): JsonObject {
         val payload = engine.exportAccounts()
         val count = engine.accounts().size
-        if (count == 0) return resultJson(false, "账号池是空的，没有可快照的内容")
-        val f = host.vault.write(payload, AccountVault.REASON_MANUAL, APP_VERSION)
-            ?: return resultJson(false, "快照失败，原因见保险柜状态")
+        if (count == 0) return resultJson(false, "账号池是空的，没有可备份的内容")
+        val f = host.vault.writeManual(payload, APP_VERSION)
+            ?: return resultJson(false, "手动备份失败，原因见保险柜状态（装到 Program Files 时该目录只读）")
         return JsonObject().apply {
             addProperty("ok", true)
-            addProperty("message", "已快照 $count 个账号（${AccountVault.sizeText(f.length())}）")
+            addProperty("message", "已备份 $count 个账号到 ${host.vault.manualDir.absolutePath}")
             addProperty("name", f.name)
             addProperty("path", f.absolutePath)
+            addProperty("dir", host.vault.manualDir.absolutePath)
         }
     }
 

@@ -28,7 +28,16 @@ import java.util.concurrent.TimeUnit
  * 3. **展示口径与旧界面一致**：所有数字在这里算好，前端不做任何"猜"。
  *    换壳不该让「今日请求数」变一个值——那种偏差最难排查。
  */
-class EngineHost(val dataDir: File) {
+class EngineHost(
+    val dataDir: File,
+    /**
+     * 安装目录（外壳传 `--install-dir`）。手动备份要写到这里。
+     *
+     * null = 不知道安装目录（命令行直接跑、开发期、测试）：手动备份回落到数据目录旁，
+     * 界面会如实显示它实际写到了哪里——不要静默假装已经写进安装目录。
+     */
+    val installDir: File? = null,
+) {
 
     /** 实例身份（由 Main 在拿到 [InstanceScope] 后填）。默认按「主实例」处理。 */
     @Volatile var derived: Boolean = false
@@ -67,7 +76,7 @@ class EngineHost(val dataDir: File) {
      * 为什么放在 host：它要读 `engine.exportAccounts()`，也要在构造完 EngineHost
      * 之后立刻能用（此时账号池已经 load 完毕）。
      */
-    internal val vault: AccountVault = AccountVault(dataDir).also { it.keepCount = VAULT_KEEP }
+    internal val vault: AccountVault = AccountVault(dataDir, installDir).also { it.keepCount = VAULT_KEEP }
 
     /** 上次看到的版本号，用来判断「这次启动是不是跨了版本」（= 刚升级过）。 */
     private val lastVersionFile: File = File(dataDir, ".last-version.txt")
@@ -90,7 +99,7 @@ class EngineHost(val dataDir: File) {
      *
      * 三件事按顺序做：
      * 1. 版本变了（= 刚升级）→ 用 `upgrade` 原因写一份，**不参与轮转**；
-     * 2. 无论版本变没变，都把当前账号落一份日常快照（内容没变则跳过）；
+     * 2. 无论版本变没变，都把当前账号落一份自动备份（内容没变则跳过）；
      * 3. 更新 `.last-version.txt`。
      *
      * @return 本次实际写了哪些：给启动日志用，用户能从日志里看到"升级前帮你存了一份"
@@ -103,31 +112,31 @@ class EngineHost(val dataDir: File) {
         return try {
             val payload = engine.exportAccounts()
             if (payloadAccounts(payload) == 0) {
-                // 空账号池不写快照：否则全新安装的机器上，10 份历史全是空文件，
+                // 空账号池不写备份：否则全新安装的机器上，10 份历史全是空文件，
                 // 真丢了数据时用户翻到的第一份就是空的。
-                sb.append("账号池为空，跳过自动快照")
+                sb.append("账号池为空，跳过自动备份")
             } else {
                 if (upgraded) {
-                    val f = vault.write(payload, AccountVault.REASON_UPGRADE, "$previous→$current")
-                    sb.append(if (f != null) "升级前快照：${f.name}" else "升级前快照失败")
+                    val f = vault.writeAuto(payload, AccountVault.REASON_UPGRADE, "$previous→$current")
+                    sb.append(if (f != null) "升级前备份：${f.name}" else "升级前备份失败")
                 }
                 val f2 = vault.writeIfChanged(payload, AccountVault.REASON_STARTUP, current)
                 if (sb.isNotEmpty()) sb.append("；")
-                sb.append(if (f2 != null) "启动快照：${f2.name}" else "启动快照已是最新（内容未变）")
+                sb.append(if (f2 != null) "启动备份：${f2.name}" else "启动备份已是最新（内容未变）")
             }
             lastVersionFile.writeText(current)
             sb.toString()
         } catch (e: Exception) {
-            sb.append("自动快照异常：${e.javaClass.simpleName}: ${e.message}")
+            sb.append("自动备份异常：${e.javaClass.simpleName}: ${e.message}")
             sb.toString()
         }
     }
 
     /**
-     * 账号变更后延迟写一份（[delayMillis] 内的连续变更合并成一次）。
+     * 账号变更后延迟写一份自动备份（[delayMillis] 内的连续变更合并成一次）。
      *
      * 延迟而不是立即：一次批量导入会逐条 upsert，每条都触发回调；
-     * 立即写等于把 20 个账号写成 20 份快照，互相挤掉。
+     * 立即写等于把 20 个账号写成 20 份备份，互相挤掉。
      */
     fun vaultSnapshotSoon(delayMillis: Long = 3000) {
         if (!vaultPending.compareAndSet(false, true)) return
@@ -139,7 +148,7 @@ class EngineHost(val dataDir: File) {
                 if (payloadAccounts(payload) == 0) return@execute
                 vault.writeIfChanged(payload, AccountVault.REASON_CHANGE, APP_VERSION)
             } catch (_: Exception) {
-                // 快照失败不能让进程崩：失败原因已经写进 vault-state.json，界面能读到
+                // 备份失败不能让进程崩：失败原因已经写进 vault-state.json，界面能读到
             } finally {
                 vaultPending.set(false)
             }

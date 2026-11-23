@@ -56,7 +56,10 @@ namespace AiGatewayWeb
         {
             string exeDir = Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath);
             if (string.IsNullOrEmpty(exeDir)) exeDir = Environment.CurrentDirectory;
-            string runArgs = "--data \"" + dataDir + "\" --no-browser";
+            // 把安装目录显式传给后端：手动账号备份要写到 <exeDir>\backups\。
+            // 后端不自己从 classpath 猜（开发态与发布态布局不同，猜错了会写到
+            // build\install\... 这种用户永远找不到的地方）。
+            string runArgs = "--data \"" + dataDir + "\" --install-dir \"" + exeDir + "\" --no-browser";
             Log("exeDir=" + exeDir);
 
             if (TryStartBundled(exeDir, runArgs)) return true;
