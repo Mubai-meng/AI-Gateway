@@ -72,18 +72,6 @@ fun main(args: Array<String>) {
         it.engine.migrateAccounts()
     }
 
-    // 账号保险柜：启动即快照一次（跨版本升级时会额外留一份「升级前」快照）。
-    // 放在 migrateAccounts() 之后：迁移把旧 uid 口径修正完，快照才记的是能用的账号。
-    //
-    // 先做一次旧格式重压（明文 .json → .json.gz）。顺序很重要：放在快照之前，
-    // 这样本轮新写的快照与转换后的历史文件是同一套后缀，不会又多出一份明文。
-    runCatching { host.vault.migrateLegacyPlaintext() }.getOrNull()?.let {
-        if (it > 0) println("[aigw-server] 账号保险柜：已把 $it 份旧明文备份重压为 .json.gz")
-    }
-    runCatching { host.vaultSnapshotOnStartup() }.getOrNull()?.let {
-        if (it.isNotEmpty()) println("[aigw-server] 账号保险柜：$it")
-    }
-
     // 账号池变化后只清理 Auto 链里失效的候选，不打乱用户手动排好的顺序
     host.engine.onAccountsChanged = {
         if (host.autoRoute.enabled()) {
@@ -92,9 +80,6 @@ fun main(args: Array<String>) {
                 name = "aigw-prune"
             }.start()
         }
-        // 账号变了 → 3 秒后合并写一份快照。放在这里而不是每个写入口：
-        // 登录、导入、删除、自动刷新 token 全都走这个回调，一处挂上就全覆盖了。
-        host.vaultSnapshotSoon()
     }
 
     val webRoot = resolveWebRoot()

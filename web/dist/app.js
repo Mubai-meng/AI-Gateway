@@ -112,10 +112,6 @@ const S = {
   media: null,
   backupList: null,
   backupLoaded: false,
-  /* 账号保险柜：账号数据的自动备份。与 backupList 分开存——
-     一个是整目录 zip（同机回滚），一个是账号 JSON（跨机迁移），语义不同不共用一个字段。 */
-  vault: null,
-  vaultLoaded: false,
   tableSig: '',
   activitySig: '',
   saveStrategy: null,
@@ -467,7 +463,6 @@ function go(page) {
   if (page === 'providers') S.customLoaded = false;
   // 账号保险柜：每次进账号页都重读备份列表。备份可能刚被自动写过
   // （启动备份、账号变更防抖写的），缓存一份旧的会让用户以为「没在自动备份」。
-  if (page === 'accounts') S.vaultLoaded = false;
   // 备份页每次进入都重读：别处可能刚删了备份，或上次恢复已经落地
   if (page === 'backup') S.backupLoaded = false;
   document.querySelectorAll('.nav-item').forEach((n) => {
@@ -2620,15 +2615,6 @@ function shortName(s, max = 22) {
 function renderAccounts() {
   const body = $('#pageBody');
   body.innerHTML = '';
-  // 首次进入先取保险柜列表（一次 HTTP 往返，之后走缓存）：
-  // 不放在 go() 里是因为只有这一页要用；心跳也不刷它（备份列表变化很慢）。
-  if (!S.vaultLoaded) {
-    S.vaultLoaded = true;
-    body.innerHTML = `<div class="empty"><span class="big">正在读取账号</span>
-      <span>加载账号池与保险柜目录</span></div>`;
-    loadVault().then(() => { if (S.page === 'accounts') renderPage(); });
-    return;
-  }
   const accounts = S.state?.accounts || [];
   const providers = S.state?.providers || [];
 
@@ -2639,7 +2625,17 @@ function renderAccounts() {
   const bCredits = el('button', 'btn', '刷新额度');
   bCredits.id = 'btnRefreshCredits';
   bCredits.addEventListener('click', doRefreshCredits);
-  actions.append(bCheckin, bCredits);
+  // 导入/导出原来挂在「保险柜」卡片里。卡片下线后不能把这个能力一起删掉：
+  // 换机器要靠它，且它是唯一能一次带走全部供应商账号的入口。
+  const bExportAcc = el('button', 'btn', '导出');
+  bExportAcc.id = 'btnExportAccounts';
+  bExportAcc.title = '把全部账号导出成一个文件（含明文凭证，可拿到别的机器导入）';
+  bExportAcc.addEventListener('click', () => exportAccountsToFile(bExportAcc));
+  const bImportAcc = el('button', 'btn', '导入');
+  bImportAcc.id = 'btnImportAccounts';
+  bImportAcc.title = '从以前导出的文件导入账号（.json / .json.gz）';
+  bImportAcc.addEventListener('click', () => openAccountImport());
+  actions.append(bCheckin, bCredits, bExportAcc, bImportAcc);
 
   const card = el('div', 'card');
   card.appendChild(headWith('账号', `${accounts.length} 个`));
@@ -2723,186 +2719,13 @@ function renderAccounts() {
   wrap.appendChild(table);
   card.appendChild(wrap);
   body.appendChild(card);
-
-  body.appendChild(buildVaultCard(accounts.length));
-}
-
-/**
- * 账号保险柜卡片。
- *
- * 为什么放在账号页而不是新开一页：侧栏 13 项已经正好占满可视区（实测 420px），
- * 再加一项就得滚动，而这一块和账号是同一件事——用户丢账号时才来找备份，
- * 让他从账号页点一步就到，比多一个侧栏入口有用。
- *
- * 三个动作的语义必须一眼分清，否则用户会以为是同一个功能：
- * - 立即备份 → 写到**安装目录** `backups/`，只有用户能删，不参与轮转
- * - 导出 → 下载成 .json（拿走，能跨机）
- * - 导入 → 从 .json 文件或某份备份恢复
- *
- * 自动备份与手动备份**分组**展示：用户得能一眼看出「哪几份是系统自己存的、
- * 哪份是我自己点的」，这决定了他删的时候会不会把系统留的兜底删掉。
- */
-function buildVaultCard(accountCount) {
-  const d = S.vault;
-  const card = el('div', 'card');
-  const autoCount = d ? (d.items || []).filter((x) => x.auto).length : 0;
-  const manualCount = d ? (d.items || []).filter((x) => !x.auto).length : 0;
-  card.appendChild(headWith('账号保险柜',
-    d ? `自动 ${autoCount} 份 · 手动 ${manualCount} 份` : '读取中'));
-  const b = el('div', 'card-body pad-top stack-12');
-
-  if (!d) {
-    b.appendChild(el('span', 'desc', '读不到保险柜目录，稍后重试或看运行日志'));
-    card.appendChild(b);
-    return card;
-  }
-
-  // ---- 状态行：自动备份有没有在跑，是用户最关心的第一件事
-  const last = d.last || {};
-  if (last.message) {
-    const when = last.atMillis ? new Date(last.atMillis).toLocaleString('zh-CN') : '';
-    b.appendChild(el('p', last.ok === false ? 'desc err-text' : 'desc',
-      `上次备份：${last.message}${when ? '（' + when + '）' : ''}`));
-  } else if (autoCount === 0) {
-    // **有备份时不要说「还没有记录」**：账号没变时启动快照会跳过不写状态，
-    // 于是「列表里躺着 4 份」和「还没有自动备份记录」会同时挂在界面上。
-    b.appendChild(el('p', 'desc', '还没有自动备份记录。启动、账号变更、版本升级时会自动各存一份。'));
-  }
-
-  // ---- 动作行
-  const row = el('div', 'action-row');
-  const bSnap = el('button', 'btn primary', '立即备份');
-  bSnap.title = '把当前账号存成一份备份文件（不参与自动轮转，不会被自动备份删掉）';
-  bSnap.addEventListener('click', async () => {
-    // 存哪儿由用户决定：默认是上次用过的目录，也能现选一个（D 盘 / U 盘 / 网盘同步盘）。
-    const dir = await askFolder('备份账号', S.vault?.manualDir || '');
-    if (dir === null) return;
-    setBtnBusy(bSnap, true, '备份中…');
-    const r = await api.post('/ui/vault/snapshot', dir ? { dir } : {});
-    setBtnBusy(bSnap, false, '');
-    toast(r.ok ? r.message : '备份失败：' + r.message, r.ok ? 'ok' : 'err', 6000);
-    if (r.ok) { await loadVault(); if (S.page === 'accounts') renderPage(); }
-  });
-
-  const bExport = el('button', 'btn', '导出全部账号');
-  bExport.title = '下载成 .json（含明文凭证，可拿到别的机器导入）';
-  bExport.addEventListener('click', () => exportAccountsToFile(bExport));
-
-  const bImport = el('button', 'btn', '导入账号');
-  bImport.title = '从 .json 文件或某份备份导入';
-  bImport.addEventListener('click', () => openVaultImport());
-
-  row.append(bSnap, bExport, bImport);
-  b.appendChild(row);
-  if (accountCount === 0) {
-    b.appendChild(el('p', 'desc err-text',
-      '当前账号池是空的。可以先「导入账号」把以前导出的 .json 找回来。'));
-  }
-
-  // ---- 两份表格：自动 / 手动。分开渲染而不是一张表加一列——
- // 用户的心理模型是两堆文件，两个目录。
-  const items = d.items || [];
-  const autoItems = items.filter((x) => x.auto);
-  const manualItems = items.filter((x) => !x.auto);
-
-  const renderTable = (list, id, emptyHint) => {
-    const wrap = el('div', 'table-wrap vault-table-wrap');
-    const table = el('table', 'grid grid-fixed compact');
-    table.id = id;
-    // 列宽按**最长真实值**量：
-    // 「11-23 08:09」等宽字体实测 80px + 内边距 → 92（78 会把分钟截成「14:…」）；
-    // 账号数最多两位数 → 38；原因最长「账号变更」4 字 → 52；体积「18.8 KB」→ 56。
-    // 操作列不写死宽度：窄窗（内容区 562）下让它自己吃余量。
-    table.innerHTML = `<thead><tr>
-      <th style="width:92px">时间</th><th class="num" style="width:38px">账号</th>
-      <th style="width:52px">原因</th><th style="width:56px">体积</th>
-      <th>操作</th>
-    </tr></thead>`;
-    const tbody = el('tbody');
-    if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5"><div class="empty">
-        <span>${esc(emptyHint)}</span></div></td></tr>`;
-    } else {
-      list.forEach((it) => {
-        const tr = el('tr');
-        const w = new Date(it.atMillis);
-        const p2 = (x) => String(x).padStart(2, '0');
-        const whenText = `${p2(w.getMonth() + 1)}-${p2(w.getDate())} ${p2(w.getHours())}:${p2(w.getMinutes())}`;
-        const reasonText = VAULT_REASON[it.reason] || it.reason;
-        tr.innerHTML = `
-          <td class="cell-muted mono">${esc(whenText)}</td>
-          <td class="num">${it.accountCount || 0}</td>
-          <td class="cell-muted">${esc(reasonText)}</td>
-          <td class="cell-muted">${esc(it.sizeText || '—')}</td>
-          <td></td>`;
-        tr.title = it.name + (it.appVersion ? `\n版本 ${it.appVersion}` : '') + `\n${it.path}`;
-        const ops = el('div', 'row-ops');
-        const dl = el('button', 'mini-btn wide', '下载');
-        dl.title = '下载这份备份';
-        dl.addEventListener('click', () => downloadVault(it.name, dl));
-        const im = el('button', 'mini-btn wide', '导入');
-        im.title = '把这份备份的账号导回当前账号池';
-        im.addEventListener('click', () => doVaultImport(it.name, im));
-        const del = el('button', 'mini-btn danger', '✕');
-        del.title = '删除这份备份';
-        del.addEventListener('click', async () => {
-          const yes = await confirmBox('删除备份',
-            `确定删除 ${it.name}？删掉后这份回滚点就没了。`);
-          if (!yes) return;
-          const r = await api.post('/ui/vault/delete', { name: it.name });
-          toast(r.ok ? '已删除' : '删除失败：' + r.message, r.ok ? 'ok' : 'err');
-          if (r.ok) { await loadVault(); if (S.page === 'accounts') renderPage(); }
-        });
-        ops.append(dl, im, del);
-        tr.lastElementChild.appendChild(ops);
-        tbody.appendChild(tr);
-      });
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    return wrap;
-  };
-
-  if (autoItems.length > 0) {
-    b.appendChild(el('p', 'desc strong-ish', `自动备份 · ${autoItems.length} 份（保留最近 ${d.keep || 10} 份）`));
-    b.appendChild(renderTable(autoItems, 'tblVaultAuto', '还没有自动备份'));
-  }
-  if (manualItems.length > 0) {
-    b.appendChild(el('p', 'desc strong-ish', `手动备份 · ${manualItems.length} 份（永不自动删除）`));
-    b.appendChild(renderTable(manualItems, 'tblVaultManual', '还没有手动备份'));
-  }
-  if (autoItems.length === 0 && manualItems.length === 0) {
-    b.appendChild(renderTable([], 'tblVaultAuto', '还没有任何备份'));
-  }
-
-  // ---- 落点只留路径本身，解释文字一律不要（用户明确要求）
-  b.appendChild(el('p', 'desc mono selectable', `自动：${d.dir}`));
-  const mDirs = (d.manualDirs && d.manualDirs.length) ? d.manualDirs : (d.manualDir ? [d.manualDir] : []);
-  if (mDirs.length) b.appendChild(el('p', 'desc mono selectable', `手动：${mDirs.join('　·　')}`));
-
-  card.appendChild(b);
-  return card;
-}
-
-/** 触发原因的用户可见文案。 */
-const VAULT_REASON = {
-  startup: '启动',
-  change: '账号变更',
-  upgrade: '升级前',
-  manual: '手动',
-};
-
-async function loadVault() {
-  const r = await api.get('/ui/vault');
-  S.vault = (r && r.ok !== false) ? r : null;
-  S.vaultLoaded = true;
 }
 
 /**
  * 导出全部账号到本地文件。
  *
- * 走 `/ui/account/export` 拿正文，再自己造 Blob 下载——不用 `/ui/vault/read`，
- * 因为导出要的是「当前账号」而不是某份历史备份，两者内容可能不同。
+ * 走 `/ui/account/export` 拿正文，再自己造 Blob 下载——服务端只给正文，
+ * 落点由系统「另存为」决定（WebView2 支持 createObjectURL）。
  * WebView2 支持 createObjectURL，落点由系统「另存为」决定。
  */
 async function exportAccountsToFile(btn) {
@@ -2917,7 +2740,7 @@ async function exportAccountsToFile(btn) {
   // 10 KB 的 JSON → 约 4 KB。落成 .json.gz，导入时自动解压（见 readAccountFile）。
   const { blob, bytes } = await gzipJson(r.payload);
   saveBlobAsFile(blob, accountFileName('all').replace(/\.json$/, '.json.gz'));
-  toast(`${r.message || '已导出'} · ${AccountVaultSize(r.payload.length)} → ${AccountVaultSize(bytes)}`, 'ok', 6000);
+  toast(`${r.message || '已导出'} · ${fmtBytes(r.payload.length)} → ${fmtBytes(bytes)}`, 'ok', 6000);
 }
 
 /** 把 JSON 文本压成 gzip。WebView2 有 CompressionStream，不需要引库。 */
@@ -2927,33 +2750,6 @@ async function gzipJson(text) {
   ).arrayBuffer();
   const bytes = new Uint8Array(out);
   return { blob: new Blob([bytes], { type: 'application/gzip' }), bytes: bytes.length };
-}
-
-/** 下载某份备份（内容是服务端那份文件的原样字节）。 */
-async function downloadVault(name, btn) {
-  setBtnBusy(btn, true, '…');
-  try {
-    // 走 POST 而不是 GET：这个端点会吐出明文凭证，服务端强制 POST
-    // （GET 会被「浏览器里任意页面构造一个请求」利用，见 UiRoutes 注释）。
-    const res = await fetch('/ui/vault/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) {
-      toast('下载失败：HTTP ' + res.status, 'err', 5000);
-      return;
-    }
-    const text = await res.text();
-    // 服务端回的是解压后的明文 JSON，文件名却还是 .json.gz —— 下载时去掉后缀，
-    // 否则用户拿到的是一份「.gz 里装明文」的文件，双击解压会报「不是 gzip」。
-    saveTextAsFile(text, name.replace(/\.gz$/, ''));
-    toast('已下载 ' + name.replace(/\.gz$/, ''), 'ok');
-  } catch (e) {
-    toast('下载失败：' + (e && e.message ? e.message : e), 'err', 5000);
-  } finally {
-    setBtnBusy(btn, false, '');
-  }
 }
 
 /** 文件名：账号-全部-20261122-0743.json 这种，便于用户自己归档。 */
@@ -2983,47 +2779,40 @@ function saveBlobAsFile(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-/** 打开「导入账号」的选择框：从文件导入，或从某份备份导入。 */
-function openVaultImport() {
-  const items = (S.vault && S.vault.items) || [];
+/**
+ * 打开「导入账号」选择框：从以前导出的文件导入。
+ *
+ * 只做一件事——选文件、读出来（`.json.gz` 自动解压）、连同 overwrite 一起提交。
+ * 保险柜下线后这里不再列「历史备份」，历史备份靠系统文件选择器直接选。
+ */
+function openAccountImport() {
   const body = `
-    <p class="desc">从文件导入：选一个以前导出的备份（<span class="mono">.json.gz</span> 或未压缩的 <span class="mono">.json</span>，内容需是 <span class="mono">aigw-accounts</span> 格式）。</p>
+    <p class="desc">选一个以前导出的文件（<span class="mono">.json.gz</span> 或未压缩的 <span class="mono">.json</span>）。</p>
     <label class="file-pick">
-      <input type="file" id="vaultFile" accept=".json,.json.gz,.gz,application/json,application/gzip">
-      <span class="desc" id="vaultFileHint">未选择文件</span>
+      <input type="file" id="accFile" accept=".json,.json.gz,.gz,application/json,application/gzip">
+      <span class="desc" id="accFileHint">未选择文件</span>
     </label>
-    ${items.length ? `<p class="desc" style="margin-top:12px">或从保险柜里的备份导入：</p>
-      <div class="vault-pick-list" id="vaultQuickList">${items.map((it) => `
-        <div class="vault-pick-row">
-          <span class="tag">${esc(VAULT_REASON[it.reason] || it.reason)}</span>
-          <span class="vault-pick-name mono">${esc(it.name)}</span>
-          <button class="mini-btn wide" data-vault-pick="${esc(it.name)}">选它</button>
-        </div>`).join('')}</div>` : ''}
     <label class="switch" style="margin-top:12px">
-      <input type="checkbox" id="vaultOverwrite"><span class="track"></span>
+      <input type="checkbox" id="accOverwrite"><span class="track"></span>
       <span>同 uid 已存在时覆盖其凭证（不勾则跳过）</span>
     </label>
   `;
-  // modal() 没有返回值（它只往固定节点里塞内容），所以这里直接按 id 取元素。
   modal('导入账号', body);
-  const fileIn = $('#vaultFile');
-  const hint = $('#vaultFileHint');
+  const fileIn = $('#accFile');
+  const hint = $('#accFileHint');
   let pickedText = null;
-  let pickedName = null;
 
   fileIn.addEventListener('change', async () => {
     const f = fileIn.files && fileIn.files[0];
     if (!f) return;
     hint.textContent = '正在读取 ' + f.name + '…';
     try {
-      // 备份是 .json.gz：解压后才拿到 JSON 正文（见 readAccountFile）
       const got = await readAccountFile(f);
       pickedText = got.text;
-      pickedName = null;
       const count = (JSON.parse(got.text).accounts || []).length;
       hint.textContent = `${f.name}`
         + `${got.gz ? '（gzip，已解压）' : ''}`
-        + `，${AccountVaultSize(f.size)} → ${AccountVaultSize(got.text.length)}`
+        + `，${fmtBytes(f.size)} → ${fmtBytes(got.text.length)}`
         + `，${count} 个账号`;
     } catch (e) {
       hint.textContent = '读取失败：' + (e && e.message ? e.message : e);
@@ -3031,26 +2820,18 @@ function openVaultImport() {
     }
   });
 
-  $('#modalBody').querySelectorAll('[data-vault-pick]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pickedText = null;
-      pickedName = btn.dataset.vaultPick;
-      if (fileIn) fileIn.value = '';
-      hint.textContent = '已选中备份：' + pickedName;
-    });
-  });
-
   const foot = el('div', 'action-row');
   const ok = el('button', 'btn primary', '开始导入');
   ok.addEventListener('click', async () => {
-    if (!pickedText && !pickedName) {
-      toast('先选一个文件或一份备份', 'warn', 4000);
+    if (!pickedText) {
+      toast('先选一个文件', 'warn', 4000);
       return;
     }
     setBtnBusy(ok, true, '导入中…');
-    const body2 = { overwrite: $('#vaultOverwrite').checked };
-    if (pickedName) body2.name = pickedName; else body2.raw = pickedText;
-    const r = await api.post('/ui/vault/import', body2, 60000);
+    const r = await api.post('/ui/account/import-all', {
+      raw: pickedText,
+      overwrite: $('#accOverwrite').checked,
+    }, 60000);
     setBtnBusy(ok, false, '');
     if (r.ok === false) {
       toast('导入失败：' + r.message, 'err', 6000);
@@ -3059,28 +2840,12 @@ function openVaultImport() {
     toast(r.message, 'ok', 6000);
     closeModal();
     await loadState();
-    await loadVault();
     if (S.page === 'accounts') renderPage();
   });
   const cancel = el('button', 'btn', '取消');
   cancel.addEventListener('click', closeModal);
   foot.append(ok, cancel);
-  // modal() 内部已经把标题/正文/页脚填好，但它把「按钮」放在 #modalFoot 而不是正文里。
-  // 这里不用 modal 自带的按钮参数，是因为要拿到 ok 按钮的引用做 busy 态，
-  // 所以自己往 #modalBody 里追加动作行。
   $('#modalBody').appendChild(foot);
-}
-
-/** 直接导入某份备份（列表行上的「导入」按钮）。 */
-async function doVaultImport(name, btn) {
-  const yes = await confirmBox('导入备份',
-    `把 ${name} 里的账号导回当前账号池？同 uid 已存在时会跳过（不覆盖现有凭证）。`);
-  if (!yes) return;
-  setBtnBusy(btn, true, '…');
-  const r = await api.post('/ui/vault/import', { name, overwrite: false }, 60000);
-  setBtnBusy(btn, false, '');
-  toast(r.ok === false ? '导入失败：' + r.message : r.message, r.ok === false ? 'err' : 'ok', 6000);
-  if (r.ok !== false) { await loadState(); await loadVault(); if (S.page === 'accounts') renderPage(); }
 }
 
 /** 读文本文件（账号 JSON 都是纯文本）。 */
@@ -3113,7 +2878,7 @@ function readFileAsBytes(file) {
 }
 
 /** 字节数的可读文本（前端这份只用于提示「文件多大」，不参与判断）。 */
-function AccountVaultSize(bytes) {
+function fmtBytes(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / 1024 / 1024).toFixed(1) + ' MB';

@@ -173,42 +173,13 @@ internal class UiRoutes(private val host: EngineHost) {
             UiOut.Json(JsonObject().apply { addProperty("ok", true) })
         },
 
-        // ---- 账号保险柜（账号数据的自动快照 / 导出 / 导入）
-        // 与上面的整目录备份刻意分开：这里只有账号、格式是明文 JSON、能跨机用。
-        // `export` 走 /ui/account/export（已有）——保险柜存的就是那个格式，
-        // 所以「导出当前账号」与「导出某份快照」是同一个文件形态，用户不用理解两套格式。
-        "/ui/vault" to { req -> UiOut.Json(host.vault.list()) },
-        "/ui/vault/snapshot" to { req ->
+        // ---- 整份账号信封导入（导出走 /ui/account/export）
+        // 与 `/ui/account/import` 的分工：那个是「某个供应商的私有格式」逐条粘，
+        // 这个是 `aigw-accounts` 信封——一份文件带多个供应商的多个账号，跨机迁移用。
+        // 保险柜下线后这条留在账号页：导入能力不该跟着备份界面一起消失。
+        "/ui/account/import-all" to { req ->
             ensurePost(req)
-            // `dir` = 用户在「备份到哪儿」里选/填的文件夹；空串=上次那个。
-            UiOut.Json(vaultSnapshotNow(req.str("dir")))
-        },
-        "/ui/vault/read" to { req ->
-            // 强制 POST：这个端点会把**明文凭证**整份吐出来。
-            // 做成 GET 等于给浏览器里任意页面留了一条「构造 img src 就把账号读走」的路子
-            // （同源策略挡不住 <img>，挡住的只是读取响应——但响应体本身也在这里）。 
-            ensurePost(req)
-            val name = req.requireStr("name", "快照名")
-            val text = host.vault.read(name)
-                ?: throw UiException.notFound("快照不存在或不可读：$name")
-            // 直接回文件体而不是塞进 JSON：这是一份可另存为 .json 的导出文件，
-            // 塞进 JSON 字段里前端还得再解一层，且浏览器会把它当文本显示。
-            UiOut.Text(text, "application/json; charset=utf-8")
-        },
-        "/ui/vault/import" to { req ->
-            ensurePost(req)
-            // 支持从快照名导入，也支持直接传正文（前端读文件后传上来）
-            val name = req.str("name")
-            val raw = if (name.isNotEmpty()) {
-                host.vault.read(name) ?: throw UiException.notFound("快照不存在：$name")
-            } else {
-                req.requireStr("raw", "账号内容")
-            }
-            UiOut.Json(importAccountBundle(raw, req.json.boolOr("overwrite", false)))
-        },
-        "/ui/vault/delete" to { req ->
-            ensurePost(req)
-            UiOut.Json(host.vault.delete(req.requireStr("name", "快照名")))
+            UiOut.Json(importAccountBundle(req.requireStr("raw", "账号内容"), req.json.boolOr("overwrite", false)))
         },
 
         // ---- 更新
@@ -498,31 +469,6 @@ internal class UiRoutes(private val host: EngineHost) {
         })
     }
 
-    /**
-     * 立即写一份**手动**备份（落安装目录 `backups/`，不参与轮转）。
-     *
-     * 与「导出当前账号」的差别：这个留在本地（安装目录旁边），导出只是把内容
-     * 递给浏览器让用户自己存。与自动备份的差别：手动那份不参与轮转、
-     * 不被自动备份覆盖——用户主动点出来留的东西，只有用户自己能删。
-     */
-    private fun vaultSnapshotNow(dirRaw: String = ""): JsonObject {
-        val payload = engine.exportAccounts()
-        val count = engine.accounts().size
-        if (count == 0) return resultJson(false, "账号池是空的，没有可备份的内容")
-        val dir = if (dirRaw.isBlank()) null else host.vault.parseManualDir(dirRaw)
-        if (dirRaw.isNotBlank() && dir == null) {
-            return resultJson(false, "目录必须是完整路径（例如 D:\\备份）：$dirRaw")
-        }
-        val f = host.vault.writeManual(payload, APP_VERSION, dir)
-            ?: return resultJson(false, "手动备份失败，原因见保险柜状态（目录不可写？装到 Program Files 时该目录只读）")
-        return JsonObject().apply {
-            addProperty("ok", true)
-            addProperty("message", "已备份 $count 个账号到 ${f.absoluteFile.parentFile.absolutePath}")
-            addProperty("name", f.name)
-            addProperty("path", f.absolutePath)
-            addProperty("dir", f.absoluteFile.parentFile.absolutePath)
-        }
-    }
 
     /**
      * 导入一份账号信封（批量）。

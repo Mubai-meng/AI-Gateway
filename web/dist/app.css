@@ -310,7 +310,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
    不限高会把整张卡片撑到 900px+，把下面的说明挤出首屏。
    限高必须加在**包裹层**（.table-wrap 才有 overflow），加在 table 上无效。
    240px 大约 8 行，够看清最近几份，再多就滚。 */
-.vault-table-wrap { max-height: 240px; }
 
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .switch input { display: none; }
@@ -604,14 +603,6 @@ table.grid tbody tr.clickable { cursor: pointer; }
 /* ---- 账号保险柜（账号页底部卡片） ---- */
 /* 快照选择列表：每行 <标签><名字 省略><按钮>，名字必须能省略——
    文件名带时间戳，长 40+ 字符，不省略会把「选它」按钮挤出 602px 内容区。 */
-.vault-pick-list { display: flex; flex-direction: column; gap: 6px; }
-.vault-pick-row {
-  display: flex; gap: 8px; align-items: center; font-size: 12px;
-}
-.vault-pick-name {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* 文件选择：原生 <input type=file> 在各浏览器外观差异大，
    统一成「按钮 + 文件名」的行式布局；input 藏在 label 里靠点击 label 触发 */
 .file-pick { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
