@@ -2,6 +2,7 @@ package dev.aigw.server
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,18 +18,26 @@ import java.nio.file.Files
  */
 class VaultMigrateTest {
 
+    /** 同 BackupCodecTest：临时目录必须在用例结束后递归删。 */
+    private val roots = mutableListOf<File>()
+
+    @AfterTest
+    fun cleanupRoots() {
+        roots.forEach { runCatching { it.deleteRecursively() } }
+        roots.clear()
+    }
+
     /**
      * 每个测试一套独立的目录树。
      *
-     * **必须建 `root/data` 而不是直接用 temp 目录**：`AccountVault.vaultDir` 是
-     * `dataDir.parent/account-vault`，如果 dataDir 直接是 `Temp\xxx`，
-     * 那么 vaultDir 会一路落到 `Temp\account-vault` ——**所有测试共用一个**，
-     * 上一个测试残留的 auto-*.json.gz 会让下一个测试判成「同名 gz 已存在」而失败。
-     * 实测踩过：13 个用例里 5 个红，全是这个原因。
+     * **必须建 `root/data` + `root/auto`**：生产口径把自动备份写在系统临时目录
+     * （`%TEMP%/aigw-account-vault`），那是**所有测试共用一个**——上一个测试残留的
+     * auto-*.json.gz 会让下一个测试判成「同名 gz 已存在」而失败。
+     * 实测踩过：13 个用例里 5 个红，全是这个原因。所以这里显式传 autoDir。
      */
     private fun newRoot(): File {
         val root = Files.createTempDirectory("aigw-vaultmig").toFile()
-        root.deleteOnExit()
+        roots.add(root)
         File(root, "data").mkdirs()
         File(root, "install").mkdirs()
         return root
@@ -36,7 +45,11 @@ class VaultMigrateTest {
 
     private fun dataDirOf(root: File): File = File(root, "data")
 
-    private fun vault(dataDir: File): AccountVault = AccountVault(dataDir, File(dataDir.parentFile, "install"))
+    private fun vault(dataDir: File): AccountVault = AccountVault(
+        dataDir,
+        File(dataDir.parentFile, "install"),
+        File(dataDir.parentFile, "auto"),
+    )
 
     /** 造一个合法的 aigw-accounts 信封，账号数可控。 */
     private fun envelope(n: Int): String {

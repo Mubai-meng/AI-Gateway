@@ -3,6 +3,7 @@ package dev.aigw.server
 import com.google.gson.JsonObject
 import java.io.File
 import java.nio.file.Files
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -18,6 +19,15 @@ import kotlin.test.assertTrue
  */
 class BackupCodecTest {
 
+    /** 本用例造过的临时目录，@AfterTest 里递归删掉（deleteOnExit 只删空目录，靠不住）。 */
+    private val roots = mutableListOf<File>()
+
+    @AfterTest
+    fun cleanupRoots() {
+        roots.forEach { runCatching { it.deleteRecursively() } }
+        roots.clear()
+    }
+
     private val magic = byteArrayOf(0x41, 0x47, 0x57, 0x31)
 
     private fun tempDir(): File {
@@ -25,7 +35,9 @@ class BackupCodecTest {
         // 直接用 Temp\xxx 作 dataDir 会让备份落进共享的 Temp\backups，
         // 几个用例的 zip 混在一起（读列表时会互相干扰，也会在 Temp 里留垃圾）。
         val root = Files.createTempDirectory("aigw-backupcodec").toFile()
-        root.deleteOnExit()
+        // deleteOnExit 只删**空**目录，而每个用例都会往里写文件，等于不删。
+        // 实测累积到 104 个目录 / 58 MB，全在 %TEMP%。所以统一在 @AfterTest 里递归删。
+        roots.add(root)
         return File(root, "data").apply { mkdirs() }
     }
 
@@ -161,7 +173,7 @@ class BackupCodecTest {
         File(dataDir, "ui-theme.txt").writeText("dark")
 
         val bm = BackupManager(dataDir)
-        val res = bm.create(includeCallLogs = true)
+        val res = bm.create()
         assertTrue(res.get("ok")?.asBoolean == true, "备份应成功：${res.get("message")}")
 
         val zipName = res.get("name").asString
@@ -181,12 +193,13 @@ class BackupCodecTest {
                 manifest.get("encrypted")?.asBoolean ?: true,
                 "清单必须标 encrypted=false，否则读包的人会去找 master.key",
             )
-            assertTrue(manifest.get("includeCallLogs").asBoolean)
+            // 调用记录一律不进包：清单里这个字段恒为 false（老版本界面据它提示）
+            assertFalse(manifest.get("includeCallLogs").asBoolean, "调用记录不该再进包")
         }
     }
 
     @Test
-    fun `关掉调用记录时包内不含 logs`() {
+    fun `调用记录一律不进包`() {
         val dataDir = tempDir()
         val secure = File(dataDir, "secure").also { it.mkdirs() }
         File(dataDir, "master.key").writeBytes(newKey())
@@ -196,13 +209,43 @@ class BackupCodecTest {
         File(secure, "acc").writeText("keep")
 
         val bm = BackupManager(dataDir)
-        val res = bm.create(includeCallLogs = false)
+        val res = bm.create()
         assertTrue(res.get("ok")?.asBoolean == true)
 
         java.util.zip.ZipFile(File(bm.backupDir, res.get("name").asString)).use { zf ->
             assertNull(zf.getEntry("secure/logs/calls/chatcmpl-1"), "logs 应被跳过")
             assertTrue(zf.getEntry("secure/acc") != null, "其余条目必须照常带上")
         }
+    }
+
+    /**
+     * 恢复不能把现有调用记录弄丢。
+     *
+     * 调用记录已经不进备份了，但恢复会**替换整个 secure 目录**——如果把 `secure/logs`
+     * 一起删掉，用户刚聊过的东西就凭空消失，而这件事在界面上没有任何提示。
+     * 所以恢复前必须先把 logs 挪到白名单之外、恢复完再挪回去。
+     */
+    @Test
+    fun `恢复不删现有调用记录`() {
+        val dataDir = tempDir()
+        val secure = File(dataDir, "secure").also { it.mkdirs() }
+        File(dataDir, "master.key").writeBytes(newKey())
+        File(secure, "acc").writeText("""{"providerId":"codebuddy"}""")
+        val logs = File(secure, "logs/calls").also { it.mkdirs() }
+        File(logs, "chatcmpl-1").writeText("older")
+
+        val bm = BackupManager(dataDir)
+        val name = bm.create().get("name").asString
+        // 备份之后又产生一条：恢复不该把它弄丢
+        File(logs, "chatcmpl-2").writeText("newer")
+
+        assertTrue(bm.requestRestore(name).get("ok").asBoolean, "恢复请求应登记成功")
+        val msg = bm.applyPending()
+        requireNotNull(msg) { "applyPending 应有结果" }
+        assertTrue(File(secure, "logs/calls/chatcmpl-2").isFile, "恢复后新产生的调用记录必须还在：$msg")
+        assertTrue(File(secure, "logs/calls/chatcmpl-1").isFile, "原有调用记录也必须还在")
+        assertTrue(File(secure, "acc").isFile, "账号数据应被恢复")
+        assertFalse(File(dataDir, BackupManager.KEEP_LOGS_DIR).exists(), "临时落脚点要清理掉")
     }
 
     @Test
@@ -214,7 +257,7 @@ class BackupCodecTest {
         File(dataDir, "ui-theme.txt").writeText("dark")
 
         val bm = BackupManager(dataDir)
-        val res = bm.create(includeCallLogs = true)
+        val res = bm.create()
         val declared = res.get("message").asString
             .substringAfter("已备份 ").substringBefore(" 个条目").toInt()
         java.util.zip.ZipFile(File(bm.backupDir, res.get("name").asString)).use { zf ->

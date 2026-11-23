@@ -131,9 +131,17 @@ internal class UiRoutes(private val host: EngineHost) {
         "/ui/backup/create" to { req ->
             ensurePost(req)
             // 存储是合并提交的（200ms 窗口），备份按文件快照整目录 ——
-            // 不先落盘的话，包里会漏掉最近那批调用记录与用量。
+            // 不先落盘的话，包里会漏掉最近那批用量/设置。
             engine.flushStore()
-            UiOut.Json(host.backup.create(req.json.boolOr("includeCallLogs", true)))
+            // `dir` 是用户点「浏览…」选的文件夹；空串=上次那个（默认备份目录）。
+            // 解析不出绝对路径就明确报错，不静默存到默认位置让用户找不到。
+            val raw = req.str("dir")
+            val dir = if (raw.isBlank()) null else host.backup.parseDir(raw)
+            if (raw.isNotBlank() && dir == null) {
+                UiOut.Json(resultJson(false, "目录必须是完整路径（例如 D:\\备份）：$raw"))
+            } else {
+                UiOut.Json(host.backup.create(dir))
+            }
         },
         "/ui/backup/delete" to { req ->
             ensurePost(req)
@@ -141,7 +149,10 @@ internal class UiRoutes(private val host: EngineHost) {
         },
         "/ui/backup/restore" to { req ->
             ensurePost(req)
-            UiOut.Json(host.backup.requestRestore(req.requireStr("name", "备份名")))
+            // 两种定位方式：列表里的名字，或用户从任意文件夹挑的绝对路径。
+            val zip = req.str("zip")
+            if (zip.isNotBlank()) UiOut.Json(host.backup.requestRestorePath(zip))
+            else UiOut.Json(host.backup.requestRestore(req.requireStr("name", "备份名")))
         },
         "/ui/backup/cancel" to { req -> ensurePost(req); UiOut.Json(host.backup.cancelRestore()) },
 
@@ -169,7 +180,8 @@ internal class UiRoutes(private val host: EngineHost) {
         "/ui/vault" to { req -> UiOut.Json(host.vault.list()) },
         "/ui/vault/snapshot" to { req ->
             ensurePost(req)
-            UiOut.Json(vaultSnapshotNow())
+            // `dir` = 用户在「备份到哪儿」里选/填的文件夹；空串=上次那个。
+            UiOut.Json(vaultSnapshotNow(req.str("dir")))
         },
         "/ui/vault/read" to { req ->
             // 强制 POST：这个端点会把**明文凭证**整份吐出来。
@@ -493,18 +505,22 @@ internal class UiRoutes(private val host: EngineHost) {
      * 递给浏览器让用户自己存。与自动备份的差别：手动那份不参与轮转、
      * 不被自动备份覆盖——用户主动点出来留的东西，只有用户自己能删。
      */
-    private fun vaultSnapshotNow(): JsonObject {
+    private fun vaultSnapshotNow(dirRaw: String = ""): JsonObject {
         val payload = engine.exportAccounts()
         val count = engine.accounts().size
         if (count == 0) return resultJson(false, "账号池是空的，没有可备份的内容")
-        val f = host.vault.writeManual(payload, APP_VERSION)
-            ?: return resultJson(false, "手动备份失败，原因见保险柜状态（装到 Program Files 时该目录只读）")
+        val dir = if (dirRaw.isBlank()) null else host.vault.parseManualDir(dirRaw)
+        if (dirRaw.isNotBlank() && dir == null) {
+            return resultJson(false, "目录必须是完整路径（例如 D:\\备份）：$dirRaw")
+        }
+        val f = host.vault.writeManual(payload, APP_VERSION, dir)
+            ?: return resultJson(false, "手动备份失败，原因见保险柜状态（目录不可写？装到 Program Files 时该目录只读）")
         return JsonObject().apply {
             addProperty("ok", true)
-            addProperty("message", "已备份 $count 个账号到 ${host.vault.manualDir.absolutePath}")
+            addProperty("message", "已备份 $count 个账号到 ${f.absoluteFile.parentFile.absolutePath}")
             addProperty("name", f.name)
             addProperty("path", f.absolutePath)
-            addProperty("dir", host.vault.manualDir.absolutePath)
+            addProperty("dir", f.absoluteFile.parentFile.absolutePath)
         }
     }
 

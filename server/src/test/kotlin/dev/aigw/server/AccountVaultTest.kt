@@ -25,7 +25,10 @@ class AccountVaultTest {
     /** 模拟安装目录（手动备份写这里）。 */
     private val installDir: File = File(root, "install").apply { mkdirs() }
 
-    private val vault get() = AccountVault(dataDir, installDir)
+    /** 自动备份目录也跟着隔离：真跑生产口径会写到用户真实的 %TEMP%，用例之间互相污染。 */
+    private val autoDir: File = File(root, "auto")
+
+    private val vault get() = AccountVault(dataDir, installDir, autoDir)
 
     @AfterTest
     fun cleanup() {
@@ -41,11 +44,21 @@ class AccountVaultTest {
     // ------------------------------------------------------------ 落点与命名
 
     @Test
-    fun `自动备份写在数据目录之外`() {
+    fun `自动备份写在数据目录之外 且默认落系统临时目录`() {
         // 这是整个功能成立的前提：用户删了数据目录，账号还得在。
         val v = vault
         assertTrue(!v.vaultDir.absolutePath.startsWith(dataDir.absolutePath), v.vaultDir.absolutePath)
-        assertEquals(dataDir.absoluteFile.parentFile, v.vaultDir.absoluteFile.parentFile)
+        // 生产口径（不传 autoDir）必须落在系统临时目录：用户要求「直接存 C 盘临时文件夹」。
+        // 只比父目录名而不用全路径 startsWith：这台机器的 TEMP 是 8.3 短名
+        // （C:\Users\SQUEMA~1\...），而 vaultDir 会被换成长名，字面比较必然不等。
+        val prod = AccountVault(dataDir, installDir)
+        assertEquals("aigw-account-vault", prod.vaultDir.name)
+        assertTrue(
+            prod.vaultDir.parentFile?.name.equals("Temp", ignoreCase = true),
+            "应落在系统临时目录下：${prod.vaultDir.absolutePath}",
+        )
+        assertTrue(!prod.vaultDir.absolutePath.startsWith(dataDir.absolutePath), prod.vaultDir.absolutePath)
+        assertTrue(prod.vaultDir.path.contains("~") == false, "短名要换成长名：${prod.vaultDir.absolutePath}")
     }
 
     @Test
@@ -227,7 +240,9 @@ class AccountVaultTest {
         // 自动目录指向一个建不出来的位置：把它的父级做成文件
         val blocker = File(root, "blocked").apply { writeText("x") }
         val badData = File(blocker, "data")
-        val v = AccountVault(badData, null)
+        // 自动目录的父级是那个文件 → 建不出来（生产口径在 %TEMP% 下，那里总是可写，
+        // 所以这里必须显式把 autoDir 指到坏位置，才测得到失败分支）
+        val v = AccountVault(badData, null, File(blocker, "auto"))
         assertNull(v.writeAuto(payload(account("u1")), AccountVault.REASON_STARTUP, "0.9.9"))
         val last = v.list().getAsJsonObject("last")
         assertTrue(last.has("message"), "失败原因必须写进状态：$last")

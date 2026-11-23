@@ -653,6 +653,72 @@ namespace AiGatewayWeb
                 case "dragStart":
                     BeginNativeDrag();
                     break;
+                // 备份落点 / 恢复来源：页面拿不到绝对路径（`<input type=file>` 只给 File 对象），
+                // 只有外壳能弹 Windows 公共对话框。选完由 Reply 把路径发回页面。
+                case "pickFolder":
+                    // 延到消息循环下一拍再弹：WebView2 的消息回调里同步开模态对话框
+                    // 会把对话框套在自己的消息泵里，实测偶发「点了没反应」。
+                    BeginInvoke((Action)(() => PickPath(true)));
+                    break;
+                case "pickFile":
+                    BeginInvoke((Action)(() => PickPath(false)));
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 弹「选文件夹 / 选文件」对话框，把结果回给页面。
+        ///
+        /// 为什么必须是外壳做这件事：备份是由后端按**绝对路径**写到那个目录里的，
+        /// 而浏览器的文件选择器只交出 File 对象、不给路径字符串。
+        ///
+        /// **用户点取消也要回一条空路径**：页面那边在等 Promise，
+        /// 不回就是按钮永远挂在「选择中…」——这类"看起来卡住"的故障最难自查。
+        /// </summary>
+        private void PickPath(bool folder)
+        {
+            string cmd = folder ? "pickedFolder" : "pickedFile";
+            string picked = "";
+            try
+            {
+                if (folder)
+                {
+                    using (var dlg = new FolderBrowserDialog())
+                    {
+                        dlg.Description = "选择备份存放的文件夹";
+                        dlg.ShowNewFolderButton = true;
+                        if (dlg.ShowDialog(this) == DialogResult.OK) picked = dlg.SelectedPath;
+                    }
+                }
+                else
+                {
+                    using (var dlg = new OpenFileDialog())
+                    {
+                        dlg.Title = "选择备份文件";
+                        dlg.Filter = "备份文件 (*.zip;*.json;*.json.gz)|*.zip;*.json;*.gz|所有文件 (*.*)|*.*";
+                        dlg.CheckFileExists = true;
+                        if (dlg.ShowDialog(this) == DialogResult.OK) picked = dlg.FileName;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ServerLauncher.Log("[pick] " + ex.Message);
+            }
+            ReplyPick(cmd, picked);
+        }
+
+        /// <summary>选择结果回页面。路径里的反斜杠交给 <see cref="JsonField.JsString"/> 转义。</summary>
+        private void ReplyPick(string cmd, string path)
+        {
+            string json = "{\"cmd\":" + JsonField.JsString(cmd) + ",\"path\":" + JsonField.JsString(path) + "}";
+            try
+            {
+                WebView.CoreWebView2.PostWebMessageAsString(json);
+            }
+            catch (Exception ex)
+            {
+                ServerLauncher.Log("[pick] reply failed: " + ex.Message);
             }
         }
 

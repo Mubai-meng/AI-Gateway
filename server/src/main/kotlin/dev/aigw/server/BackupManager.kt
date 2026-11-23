@@ -19,23 +19,43 @@ import java.util.zip.ZipOutputStream
  * 这一层是纯文件操作，不认识 HTTP，也不碰 core —— 它只保证一件事：
  * **任何一次替换都可回滚**。磁盘上的凭证在 `secure/` 下、由 `master.key` 加密；
  * **备份包里出的是明文**（见 [BackupCodec] 的说明：个人自用、无跨人流转需求，
- * 而密文熵饱和导致 deflate 完全压不动，2.2 MB 的调用记录一点都不瘦）。
+ * 而密文熵饱和导致 deflate 完全压不动）。
  *
- * 四条硬约定：
- * 1. **备份目录在数据目录之外**（`<dataDir>/../backups`）。放在里面的话，
- *    恢复时"先清空再解压"会把备份自己删掉，用户就失去了唯一的回滚点。
+ * 五条硬约定：
+ * 1. **备份目录默认在数据目录之外**（`<dataDir>/../backups`），但用户可以
+ *    点「浏览…」把这一份存到任意文件夹（默认位置仍记在清单里参与扫描）。
+ *    放在数据目录里的话，恢复时"先清空再解压"会把备份自己删掉。
  * 2. **不备份 `webview2/`**。它占 80 MB（Chromium 缓存，与本项目数据无关），
  *    混进去会让一次备份从 2 MB 变成 80 MB，用户不会再用第二次。
- * 3. **恢复不立即替换**：只登记一个 `.restore-pending.json`，由下次进程启动
+ * 3. **不备份调用记录**（`secure/logs/`）。用户明确要求：那是可以重新产生的日志，
+ *    混进包里只会让备份从几十 KB 涨到 2 MB。恢复时也**不动**现有调用记录。
+ * 4. **恢复不立即替换**：只登记一个 `.restore-pending.json`，由下次进程启动
  *    在拿到实例锁之后、打开加密存储之前执行。正在跑的进程持有 `secure/` 下的
  *    文件句柄，边跑边替换会得到半个账号池。
- * 4. **解压必须防 zip-slip**：条目名里出现 `..` 或绝对路径一律整包拒绝。
+ * 5. **解压必须防 zip-slip**：条目名里出现 `..` 或绝对路径一律整包拒绝。
  *    本服务只监听 127.0.0.1，但浏览器里任意页面都能发请求过来。
  */
 internal class BackupManager(private val dataDir: File) {
 
-    /** 备份存放目录：数据目录的兄弟目录，绝不在数据目录内部。 */
+    /** 备份默认存放目录：数据目录的兄弟目录，绝不在数据目录内部。 */
     val backupDir: File = File(dataDir.absoluteFile.parentFile, "backups")
+
+    /**
+     * 实际可能存放备份的目录清单。
+     *
+     * 允许用户自选文件夹之后，列表不能再只扫一个目录——否则
+     * 「我刚备份到 D 盘」和「列表里只有旧的」会同时成立。
+     */
+    private val dirs = BackupDirs(defaultDir = backupDir, storeFile = File(dataDir, "backup-dirs.json"))
+
+    /** 把界面传来的目录字符串解析成绝对路径；空串=上次那个，相对路径返回 null。 */
+    fun parseDir(raw: String?): File? = dirs.parse(raw)
+
+    /** 当前默认（上次使用）的备份目录。 */
+    fun currentDir(): File = dirs.primary()
+
+    /** 全部扫描目录。 */
+    fun dirList(): List<File> = dirs.all()
 
     /** 主密钥：只读不造（造密钥是启动期 `EncryptedKeyValueStore` 的职责）。 */
     private val keyFile: File = File(dataDir, "master.key")
@@ -56,16 +76,24 @@ internal class BackupManager(private val dataDir: File) {
      * 用白名单而不是"全部"：`webview2/`、`.instance.*`、`shell-launcher.log`、
      * `.update-cache.json` 都是可再生的进程状态，带进备份只会让包变大、
      * 让恢复后的实例身份变得可疑（`.instance.json` 里写死了旧端口）。
+     *
+     * **调用记录（`logs/` 与 `secure/logs/`）不在名单里**：用户明确要求不要备份——
+     * 那份东西每次对话都会长，占旧包的九成以上，而它对"能不能用"毫无帮助。
      */
     private fun snapshotTopLevel(): List<String> = buildList {
-        add("secure")           // 账号、凭证、设置、调用记录、用量（全在这里，加密）
+        add("secure")           // 账号、凭证、设置、用量（全在这里，加密）
         add("master.key")       // 没有它，secure/ 就是一堆无法解密的字节
         add("antigravity-oauth.json")
         add("ui-theme.txt")
         add("auto-route.txt")
-        // 明文遗留目录：正常情况为空（迁移后已清），但旧版本可能还在用
-        add("account"); add("pool"); add("logs"); add("usage"); add("login")
+        // 明文遗留目录：正常情况为空（迁移后已清），但旧版本可能还在用。
+        // 注意没有 logs / usage 里的日志类内容——调用记录一律不进包。
+        add("account"); add("pool"); add("usage"); add("login")
     }.filter { File(dataDir, it).exists() }
+
+    /** 目录里只有调用记录的子路径：打包、清理、恢复三处都按这两条前缀排除。 */
+    private fun isCallLog(rel: String): Boolean =
+        rel.startsWith("secure/logs/") || rel.startsWith("logs/")
 
     // ---------------------------------------------------------------- 创建
 
@@ -74,29 +102,30 @@ internal class BackupManager(private val dataDir: File) {
      *
      * 包内 `secure/` 条目是**明文**（`encrypted: false` 写进清单）。个人自用工具，
      * 备份只在自己机器之间流转，没有"他人拿到包"这个威胁模型；而密文熵饱和，
-     * deflate 压缩比实测 1.00，2.2 MB 的调用记录一点都不瘦。磁盘上的 `secure/`
-     * 仍然加密，那一层保护的是别的场景。
+     * deflate 压缩比实测 1.00。磁盘上的 `secure/` 仍然加密，那一层保护的是别的场景。
+     *
+     * **不含调用记录**（[isCallLog] 排除），所以包只有几十 KB。
      *
      * 旧版本生成的加密包**仍可恢复**：包内自带 `master.key` + 密文，搬回数据目录后
      * 同一个 key 解得开。恢复逻辑不关心包内是密文还是明文。
      *
-     * @param includeCallLogs 是否带上 `secure/logs/`（调用记录全文）。关掉后包明显变小，
-     *                        但恢复后「调用记录」页会是空的——所以这是个显式开关，
-     *                        不是默默裁剪。
+     * @param dir 用户点「浏览…」选定的目录；null 表示用上次那个（默认备份目录）。
+     *   成功后会记住这个目录，下次列表里仍然看得到它。
      */
-    fun create(includeCallLogs: Boolean): JsonObject {
-        backupDir.mkdirs()
-        if (!backupDir.isDirectory) {
-            return resultJson(false, "备份目录无法创建：${backupDir.absolutePath}")
+    fun create(dir: File? = null): JsonObject {
+        val outDir = dir?.absoluteFile ?: currentDir()
+        outDir.mkdirs()
+        if (!outDir.isDirectory) {
+            return resultJson(false, "备份目录无法创建：${outDir.absolutePath}")
         }
         val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
             .withZone(ZoneId.systemDefault()).format(Instant.now())
         // 同一秒内连点两次会撞名，而 renameTo 在这条路径上**不覆盖**（Windows 上返回 false，
         // 代码随后 copyTo(overwrite=true) 就把上一份删了）——实测连点两次只剩一份。
         // 名字里带序号，保证每次创建都是新文件。
-        val name = uniqueName("aigw-backup-$stamp")
-        val target = File(backupDir, name)
-        val tmp = File(backupDir, "$name.tmp")
+        val name = uniqueName(outDir, "aigw-backup-$stamp")
+        val target = File(outDir, name)
+        val tmp = File(outDir, "$name.tmp")
 
         var entries = 0
         try {
@@ -105,11 +134,11 @@ internal class BackupManager(private val dataDir: File) {
                 for (top in snapshotTopLevel()) {
                     val root = File(dataDir, top)
                     if (root.isFile) {
-                        entries += addFile(zos, root, top, includeCallLogs)
+                        entries += addFile(zos, root, top)
                     } else if (root.isDirectory) {
                         root.walkTopDown().filter { it.isFile }.forEach { f ->
                             val rel = f.relativeTo(dataDir).invariantSeparatorsPath
-                            entries += addFile(zos, f, rel, includeCallLogs)
+                            entries += addFile(zos, f, rel)
                         }
                     }
                 }
@@ -117,7 +146,9 @@ internal class BackupManager(private val dataDir: File) {
                 val manifest = JsonObject().apply {
                     addProperty("createdAtMillis", System.currentTimeMillis())
                     addProperty("appVersion", APP_VERSION)
-                    addProperty("includeCallLogs", includeCallLogs)
+                    // 字段保留但恒为 false：老版本界面据它显示「含调用记录」的提示，
+                    // 现在的包一律不含。读包的人不必再分情况。
+                    addProperty("includeCallLogs", false)
                     // 包内 secure/ 条目是否为明文。读包的人（或将来做导入功能的自己）
                     // 需要知道这件事，否则会去找 master.key 却不知道它其实只对旧包有用。
                     addProperty("encrypted", false)
@@ -137,29 +168,31 @@ internal class BackupManager(private val dataDir: File) {
             return resultJson(false, "备份失败：${e.javaClass.simpleName}: ${e.message}")
         }
 
+        dirs.remember(outDir)
         return JsonObject().apply {
             addProperty("ok", true)
             addProperty("message", "已备份 $entries 个条目（${sizeText(target.length())}）")
             addProperty("name", name)
             addProperty("path", target.absolutePath)
+            addProperty("dir", outDir.absolutePath)
             addProperty("bytes", target.length())
         }
     }
 
     /** 同名时追加 `-2`、`-3`…，返回一个当下不存在的文件名（含 .zip）。 */
-    private fun uniqueName(base: String): String {
+    private fun uniqueName(dir: File, base: String): String {
         var candidate = "$base.zip"
         var i = 2
-        while (File(backupDir, candidate).exists()) {
+        while (File(dir, candidate).exists()) {
             candidate = "$base-$i.zip"
             i++
         }
         return candidate
     }
 
-    /** 单个条目入包；调用记录可按前缀跳过。返回实际写入的条目数。 */
-    private fun addFile(zos: ZipOutputStream, file: File, rel: String, includeCallLogs: Boolean): Int {
-        if (!includeCallLogs && rel.startsWith("secure/logs/")) return 0
+    /** 单个条目入包；调用记录跳过。返回实际写入的条目数。 */
+    private fun addFile(zos: ZipOutputStream, file: File, rel: String): Int {
+        if (isCallLog(rel)) return 0
         // .tmp 残片是原子写的中转文件，带进备份没有意义
         if (rel.endsWith(".tmp")) return 0
         try {
@@ -210,13 +243,16 @@ internal class BackupManager(private val dataDir: File) {
                 addProperty("atMillis", info?.first ?: f.lastModified())
                 addProperty("appVersion", info?.second?.get("appVersion")?.takeIf { !it.isJsonNull }?.asString ?: "")
                 addProperty("entryCount", info?.second?.get("entryCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0)
+                // 老包的清单里可能是 true（那时还没禁止调用记录）。界面据此提示
+                // 「这份是旧包、含调用记录」——新包一律 false。
                 addProperty("includeCallLogs", info?.second?.get("includeCallLogs")?.takeIf { !it.isJsonNull }?.asBoolean ?: false)
             })
         }
         val top = snapshotTopLevel()
         return JsonObject().apply {
             addProperty("ok", true)
-            addProperty("dir", backupDir.absolutePath)
+            addProperty("dir", currentDir().absolutePath)
+            add("dirs", JsonArray().apply { dirList().forEach { add(it.absolutePath) } })
             addProperty("count", arr.size())
             add("items", arr)
             add("scope", JsonArray().apply { top.forEach { add(it) } })
@@ -226,22 +262,26 @@ internal class BackupManager(private val dataDir: File) {
     }
 
     /**
-     * 备份文件按创建时间倒序（最新的在最上面）。
+     * 备份文件按创建时间倒序（最新的在最上面），并覆盖用户选过的全部目录。
      *
      * 不能按文件名字典序：同秒创建的 `…-1549.zip` 与 `…-1549-2.zip` 里，
      * `-`(45) 排在 `.`(46) 前面，字典序会把后创建的那份排到前面去——
      * 列表顺序会和"最新"直觉相反。
      */
     private fun scanBackups(): List<File> =
-        (backupDir.listFiles { f -> f.isFile && f.name.startsWith("aigw-backup-") && f.name.endsWith(".zip") })
-            ?.sortedByDescending { readManifest(it)?.first ?: it.lastModified() } ?: emptyList()
+        dirList().flatMap { d ->
+            d.listFiles { f -> f.isFile && f.name.startsWith("aigw-backup-") && f.name.endsWith(".zip") }
+                ?.toList().orEmpty()
+        }.sortedByDescending { readManifest(it)?.first ?: it.lastModified() }
+
+    /** 按名字在所有已知目录里定位（删除/恢复用）。 */
+    private fun find(name: String): File? {
+        if (name.contains('/') || name.contains('\\') || name.contains("..")) return null
+        return dirs.resolve(name)
+    }
 
     fun delete(name: String): JsonObject {
-        if (name.contains('/') || name.contains('\\') || name.contains("..")) {
-            return resultJson(false, "非法的备份名：$name")
-        }
-        val f = File(backupDir, name)
-        if (!f.isFile) return resultJson(false, "备份不存在：$name")
+        val f = find(name) ?: return resultJson(false, "备份不存在：$name")
         return if (f.delete()) {
             resultJson(true, "已删除备份 $name")
         } else {
@@ -258,14 +298,34 @@ internal class BackupManager(private val dataDir: File) {
      * 实例锁在手里、加密存储还没打开——三个条件同时成立才不会读到半个账号池。
      */
     fun requestRestore(name: String): JsonObject {
-        if (name.contains('/') || name.contains('\\') || name.contains("..")) {
-            return resultJson(false, "非法的备份名：$name")
+        val f = find(name) ?: return resultJson(false, "备份不存在：$name")
+        return requestRestore(f, name)
+    }
+
+    /**
+     * 按**绝对路径**登记恢复。用户从任意文件夹挑了一份自己的 zip 时走这条。
+     *
+     * 与按名字恢复的唯一差别是定位方式：这里不接受相对路径、不要求文件在已知目录里，
+     * 但仍然跑同一套结构校验（有清单、路径安全）——"从别处拿来的包"更需要验。
+     */
+    fun requestRestorePath(path: String): JsonObject {
+        val raw = path.trim()
+        if (raw.isEmpty()) return resultJson(false, "没有指定备份文件")
+        val f = File(raw)
+        if (!f.isAbsolute) return resultJson(false, "请给出完整路径（例如 D:\\备份\\aigw-backup-xxx.zip）：$raw")
+        if (!f.isFile) return resultJson(false, "文件不存在：${f.absolutePath}")
+        if (!f.name.endsWith(".zip", ignoreCase = true)) {
+            return resultJson(false, "只认本程序生成的 .zip 备份包：${f.name}")
         }
-        val f = File(backupDir, name)
+        return requestRestore(f, f.name)
+    }
+
+    private fun requestRestore(f: File, name: String): JsonObject {
         if (!f.isFile) return resultJson(false, "备份不存在：$name")
-        if (!validateZip(f).ok) {
-            return resultJson(false, "备份包不可用：${validateZip(f).error}")
-        }
+        val v = validateZip(f)
+        if (!v.ok) return resultJson(false, "备份包不可用：${v.error}")
+        // 手工挑进来的包也记住它所在的目录，下次列表里就能直接看到
+        dirs.remember(f.absoluteFile.parentFile)
         val json = JsonObject().apply {
             addProperty("zip", f.absolutePath)
             addProperty("name", name)
@@ -278,6 +338,7 @@ internal class BackupManager(private val dataDir: File) {
                 addProperty("ok", true)
                 addProperty("message", "已登记恢复：$name。重启应用后生效（重启前会自动快照当前数据）")
                 addProperty("name", name)
+                addProperty("path", f.absolutePath)
             }
         }.getOrElse { resultJson(false, "写入恢复标记失败：${it.message}") }
     }
@@ -344,7 +405,7 @@ internal class BackupManager(private val dataDir: File) {
         if (!v.ok) return fail("备份包校验失败：${v.error}")
 
         // 1) 回滚点：先把现状整体备份一次。失败就不继续——没有回滚点的替换不接受。
-        val rollback = create(includeCallLogs = true)
+        val rollback = create()
         if (rollback.get("ok")?.asBoolean != true) {
             return fail("恢复前的自动快照失败，已放弃恢复：${rollback.str("message")}")
         }
@@ -378,7 +439,20 @@ internal class BackupManager(private val dataDir: File) {
             return fail("备份包里没有任何可恢复条目（现有数据未改动）")
         }
 
-        // 3) 到这里才清空 —— 所有字节已落盘，剩下的只是同盘移动
+        // 3) 到这里才清空 —— 所有字节已落盘，剩下的只是同盘移动。
+        //    先给调用记录腾地方：它不在备份范围内，也不该被恢复抹掉。
+        //    `secure/logs` 是 `secure/` 的子目录，直接 deleteRecursively 会连它一起删，
+        //    所以先整体搬到白名单之外的暂存名，恢复完再搬回去。
+        val keepLogs = File(dataDir, KEEP_LOGS_DIR)
+        runCatching { keepLogs.deleteRecursively() }
+        val liveLogs = File(dataDir, "secure/logs")
+        val hadLogs = liveLogs.isDirectory
+        if (hadLogs) {
+            runCatching {
+                keepLogs.parentFile?.mkdirs()
+                if (!liveLogs.renameTo(keepLogs)) liveLogs.copyRecursively(keepLogs, overwrite = true)
+            }
+        }
         for (top in snapshotTopLevel()) {
             val f = File(dataDir, top)
             if (f.exists()) runCatching { f.deleteRecursively() }
@@ -394,6 +468,22 @@ internal class BackupManager(private val dataDir: File) {
             return fail("移入失败（回滚包 $rollbackName 可完整还原）：${e.message}")
         }
         runCatching { staging.deleteRecursively() }
+
+        // 4.5) 调用记录搬回去。包是旧的、里面带 logs 时也不覆盖现有记录：
+        //      现有那份才是用户此刻的真实历史，旧包里的同名前缀文件按序号改名保留。
+        if (hadLogs && keepLogs.isDirectory) {
+            val dst = File(dataDir, "secure/logs")
+            runCatching {
+                dst.mkdirs()
+                keepLogs.listFiles()?.forEach { src ->
+                    var out = File(dst, src.name)
+                    var i = 2
+                    while (out.exists()) { out = File(dst, "${src.nameWithoutExtension}-$i.${src.extension}"); i++ }
+                    if (!src.renameTo(out)) src.copyRecursively(out, overwrite = true)
+                }
+                keepLogs.deleteRecursively()
+            }
+        }
 
         // 5) **明文包必须重新加密**：包内是明文（`encrypted: false`），原样搬回去
         //    就等于把凭证铺在磁盘上。旧加密包不受影响（`looksEncrypted` 直接跳过）。
@@ -496,6 +586,14 @@ internal class BackupManager(private val dataDir: File) {
 
         /** 恢复解压的暂存目录：**必须在白名单之外**，否则"清空白名单"会把暂存一起删掉。 */
         const val STAGING_DIR = ".restore-staging"
+
+        /**
+         * 恢复期间调用记录的临时落脚点。同样必须在白名单之外。
+         *
+         * 调用记录不进备份，但恢复也不该把它抹掉——用户刚聊过的东西还在界面上，
+         * 恢复一次账号配置就全没了，那是纯粹的损失。
+         */
+        const val KEEP_LOGS_DIR = ".restore-keep-logs"
 
         /** 人对人可读的体积。 */
         fun sizeText(bytes: Long): String = when {

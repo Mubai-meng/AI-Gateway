@@ -25,21 +25,26 @@ import java.time.format.DateTimeFormatter
  *
  * | | 自动备份 | 手动备份 |
  * |---|---|---|
- * | 落点 | `<dataDir>/../account-vault/`（数据目录之外） | **安装目录** `backups/` |
+ * | 落点 | **系统临时目录** `<tmp>/aigw-account-vault/` | 用户点「浏览…」选的文件夹，默认安装目录 `backups/` |
  * | 命名 | `auto-yyyyMMdd-HHmmss.json` | `manual-yyyyMMdd-HHmmss.json` |
  * | 时机 | 启动 / 账号变更 / 版本变化 | 用户点「立即备份」 |
  * | 轮转 | 自动只留最近 10 份（升级前那份除外） | **不轮转**，用户自己删 |
  *
  * 三个设计决定：
  *
- * 1. **自动备份在数据目录之外**（`<dataDir>/../account-vault`）。
- *    这是「用户把数据目录删了、账号还在」的唯一可能——放在里面就跟着一起没了。
- *    与 BackupManager 同一个教训：恢复时先清空再解压会把备份自己删掉。
+ * 1. **自动备份在系统临时目录**（`%TEMP%\aigw-account-vault`）。用户明确要求
+ *    「自动备份不用选地方，直接存 C 盘临时文件夹」——那是系统自己维护的兜底，
+ *    不值得占用用户的可见位置。代价是可能被清理工具扫掉，所以保留 10 份、
+ *    且手动备份单独存在别处（见第 2 条）。
+ *    老版本放在 `<dataDir>/../account-vault`，那份仍然参与扫描与删除，
+ *    用户不会因为升级后换了目录就以为备份丢了。
  *
- * 2. **手动备份在安装目录**。用户要求「备份到文件安装的目录」——那一份是用户主动
- *    点出来、要自己保管的东西，放在程序旁边最容易找到（也便于连程序一起拷走）。
- *    安装目录只读时（写在 Program Files）写不进去，这时明确回失败原因并提示换用导出，
- *    而不是静默写到别的目录让用户找不到。
+ * 2. **手动备份让用户自己选文件夹**，默认安装目录 `backups/`。用户明确要求
+ *    「备份地址可以手动选择文件夹」——那一份是他主动点出来、要自己保管的东西，
+ *    放在哪儿应当由他决定（D 盘、U 盘、网盘同步目录都合理）。
+ *    选过的目录记在 `vault-manual-dirs.json` 里并全部参与列表扫描，
+ *    否则换个目录存一份、下次打开界面就"看不见"了。
+ *    安装目录只读时（写在 Program Files）明确回失败原因，不静默换地方。
  *
  * 3. **凭证是明文 JSON**。不做加密，理由：加密就得再管一份密钥，
  *    而密钥丢了这份备份也就废了，等于没备份。安全性靠两件事兜：
@@ -54,19 +59,48 @@ internal class AccountVault(
     private val dataDir: File,
     /** 安装目录（外壳传 `--install-dir`）。null = 不知道，手动备份回落到数据目录旁。 */
     private val installDir: File? = null,
+    /**
+     * 自动备份目录。null = 系统临时目录（生产口径，用户要求的「C 盘临时文件夹」）。
+     * 单测传自己的目录：否则多个用例共用同一个真实临时目录，备份数会互相污染。
+     */
+    autoDir: File? = null,
 ) {
 
-    /** 自动备份目录：数据目录的兄弟目录。 */
-    val vaultDir: File = File(dataDir.absoluteFile.parentFile, "account-vault")
+    /**
+     * 自动备份目录：**系统临时目录**（用户明确要求「直接存 C 盘临时文件夹」）。
+     *
+     * 仍然在数据目录之外——放在里面会跟着数据目录一起被删（与 BackupManager 同一个教训），
+     * 只是不再占用户可见的位置。`java.io.tmpdir` 在 Windows 上就是
+     * `C:\Users\<user>\AppData\Local\Temp`。
+     */
+    val vaultDir: File = autoDir?.absoluteFile ?: File(tempRoot(), "aigw-account-vault")
 
-    /** 手动备份目录：安装目录下的 `backups/`。不知道安装目录时回落到数据目录旁。 */
-    val manualDir: File = run {
-        val base = installDir?.absoluteFile
-        // 安装目录写不进去（Program Files 只读）时不要静默换地方：
-        // 先按用户要求放到安装目录，写失败由 writeManual 报出真实原因。
-        if (base != null && base.isDirectory) File(base, "backups")
-        else File(dataDir.absoluteFile.parentFile, "account-manual")
-    }
+    /** 老版本的自动备份目录（`<dataDir>/../account-vault`）。只读、仍参与列表与删除。 */
+    val legacyVaultDir: File = File(dataDir.absoluteFile.parentFile, "account-vault")
+
+    /**
+     * 手动备份的候选目录清单。
+     *
+     * 默认是安装目录下的 `backups/`；用户点「浏览…」选过别的目录后，
+     * 那个目录会被记住并一起扫描——否则「我明明备份了」和「列表里空着」会同时成立。
+     */
+    private val manualDirs: BackupDirs = BackupDirs(
+        defaultDir = run {
+            val base = installDir?.absoluteFile
+            if (base != null && base.isDirectory) File(base, "backups")
+            else File(dataDir.absoluteFile.parentFile, "account-manual")
+        },
+        storeFile = File(dataDir, "vault-manual-dirs.json"),
+    )
+
+    /** 手动备份的默认（上次使用的）目录。界面用它做输入框初值。 */
+    val manualDir: File get() = manualDirs.primary()
+
+    /** 手动备份扫描的全部目录（含用户自选过的）。 */
+    fun manualDirList(): List<File> = manualDirs.all()
+
+    /** 把界面传来的目录字符串解析成绝对路径；非法/相对路径返回 null。 */
+    fun parseManualDir(raw: String?): File? = manualDirs.parse(raw)
 
     /** 自动备份保留份数（启动 / 账号变更）。 */
     var keepCount: Int = DEFAULT_KEEP
@@ -97,13 +131,20 @@ internal class AccountVault(
         writeInto(vaultDir, AUTO_PREFIX, null, payload, reason, appVersion)
 
     /**
-     * 写一份**手动**备份，落安装目录 `backups/manual-yyyyMMdd-HHmmss.json`。
+     * 写一份**手动**备份，落 `manual-yyyyMMdd-HHmmss.json.gz`。
      *
      * 与自动备份**不共用目录、不共用前缀、不参与轮转**——用户要求手动备份不能被
      * 自动备份覆盖/轮转掉。手动那份是用户主动点出来留的，只有用户自己能删。
+     *
+     * @param dir 用户选定的目录；null 表示用上次那个（[manualDir]）。
+     *   写成功后会记住这个目录，下次列表仍然能看到它。
      */
-    fun writeManual(payload: String, appVersion: String): File? =
-        writeInto(manualDir, MANUAL_PREFIX, "手动备份", payload, REASON_MANUAL, appVersion)
+    fun writeManual(payload: String, appVersion: String, dir: File? = null): File? {
+        val target = dir?.absoluteFile ?: manualDir
+        val f = writeInto(target, MANUAL_PREFIX, "手动备份", payload, REASON_MANUAL, appVersion)
+        if (f != null) manualDirs.remember(target)
+        return f
+    }
 
     /**
      * 写文件的实际实现。
@@ -209,8 +250,12 @@ internal class AccountVault(
      */
     fun migrateLegacyPlaintext(): Int {
         var done = 0
-        val dirs = listOf(vaultDir to listOf(AUTO_PREFIX, "accounts"), manualDir to listOf(MANUAL_PREFIX))
-        for ((dir, prefixes) in dirs) {
+        val jobs = buildList {
+            add(vaultDir to listOf(AUTO_PREFIX, "accounts"))
+            add(legacyVaultDir to listOf(AUTO_PREFIX, "accounts"))
+            manualDirs.all().forEach { add(it to listOf(MANUAL_PREFIX)) }
+        }
+        for ((dir, prefixes) in jobs) {
             if (!dir.isDirectory) continue
             val old = dir.listFiles { f ->
                 f.isFile && f.name.endsWith(".json") && prefixes.any { f.name.startsWith("$it-") }
@@ -279,6 +324,9 @@ internal class AccountVault(
             addProperty("ok", true)
             addProperty("dir", vaultDir.absolutePath)
             addProperty("manualDir", manualDir.absolutePath)
+            // 手动备份可能散在用户选过的多个目录里：界面需要知道全部，
+            // 否则「换个目录存一份」之后说不清文件到底在哪儿。
+            add("manualDirs", JsonArray().apply { manualDirList().forEach { add(it.absolutePath) } })
             addProperty("count", arr.size())
             addProperty("keep", keepCount)
             add("items", arr)
@@ -315,17 +363,24 @@ internal class AccountVault(
         if (name.contains('/') || name.contains('\\') || name.contains("..")) return null
         if (!AccountPack.isAccountFile(name)) return null
         return when {
-            name.startsWith("$AUTO_PREFIX-") -> File(vaultDir, name)
-            name.startsWith("$MANUAL_PREFIX-") -> File(manualDir, name)
+            // 自动备份：当前临时目录优先，其次是老版本的目录（升级后旧文件仍在原处）
+            name.startsWith("$AUTO_PREFIX-") ->
+                listOf(vaultDir, legacyVaultDir).map { File(it, name) }.firstOrNull { it.isFile }
+                    ?: File(vaultDir, name)
+            // 手动备份：用户可能把同一份名前缀的文件存在多个自选目录里，按清单顺序找第一个
+            name.startsWith("$MANUAL_PREFIX-") -> manualDirs.resolve(name) ?: File(manualDir, name)
             else -> null
         }
     }
 
-    /** 自动备份目录里的条目。 */
-    private fun scanAuto(): List<Entry> = scanDir(vaultDir, AUTO_PREFIX)
+    /** 自动备份目录里的条目：当前临时目录 + 老版本目录，两处都要列出来。 */
+    private fun scanAuto(): List<Entry> =
+        (listOf(vaultDir, legacyVaultDir).distinct().flatMap { scanDir(it, AUTO_PREFIX) })
+            .sortedByDescending { it.atMillis }
 
-    /** 手动备份目录里的条目。 */
-    private fun scanManual(): List<Entry> = scanDir(manualDir, MANUAL_PREFIX)
+    /** 手动备份目录里的条目：扫描用户选过的全部目录。 */
+    private fun scanManual(): List<Entry> =
+        manualDirs.all().flatMap { scanDir(it, MANUAL_PREFIX) }.sortedByDescending { it.atMillis }
 
     private fun scanDir(dir: File, prefix: String): List<Entry> {
         val files = dir.listFiles { f -> f.isFile && f.name.startsWith("$prefix-") && AccountPack.isAccountFile(f.name) }
@@ -471,6 +526,31 @@ internal class AccountVault(
             bytes < 1024 -> "$bytes B"
             bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
             else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        }
+
+        /**
+         * 系统临时目录，尽量给出长名。
+         *
+         * 有些机器的 `TEMP` 被设成 8.3 短名（`C:\Users\SQUEMA~1\AppData\Local\Temp`）：
+         * 能访问，但界面把它显示出来像一条坏路径。这里只做一件事——把「用户目录」
+         * 那一段换成 `user.home` 的名字，换完必须真的存在，否则原样返回。
+         * 特意不走 `getCanonicalPath`：Windows 上它不展开 8.3 短名。
+         */
+        private fun tempRoot(): File {
+            val raw = System.getProperty("java.io.tmpdir").orEmpty().ifEmpty { "C:\\Windows\\Temp" }
+            val dir = File(raw).absoluteFile
+            if (!dir.path.contains('~')) return dir
+            val home = File(System.getProperty("user.home").orEmpty()).absoluteFile
+            if (home.path.contains('~') || home.name.isEmpty()) return dir
+            val segs = dir.path.split('\\')
+            // C: \ Users \ SQUEMA~1 \ AppData \ ...
+            if (segs.size > 3 && segs[1].equals("Users", true) &&
+                segs[2].contains('~') && home.parentFile?.name.equals("Users", true)
+            ) {
+                val long = File(segs[0] + "\\Users\\" + home.name + "\\" + segs.drop(3).joinToString("\\"))
+                if (long.isDirectory) return long
+            }
+            return dir
         }
     }
 }

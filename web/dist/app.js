@@ -112,9 +112,6 @@ const S = {
   media: null,
   backupList: null,
   backupLoaded: false,
-  /* 备份页「包含调用记录」开关的跨次记忆（true = 不带，包只有几十 KB）。
-     放 S 上而不是只读 DOM：切页回来时 DOM 会重建，勾选状态得从这儿恢复。 */
-  backupNoLogs: false,
   /* 账号保险柜：账号数据的自动备份。与 backupList 分开存——
      一个是整目录 zip（同机回滚），一个是账号 JSON（跨机迁移），语义不同不共用一个字段。 */
   vault: null,
@@ -302,6 +299,90 @@ function confirmBox(title, message) {
       { text: '确定', primary: true, onClick: () => settle(true) },
     ]);
   });
+}
+
+/**
+ * 弹外壳的原生「选文件夹 / 选文件」对话框，返回绝对路径。
+ *
+ * 为什么不能自己选：`<input type=file>` 只给 File 对象，拿不到 `D:\备份` 这种
+ * 路径字符串，而备份是**后端按路径写到那个目录**里的。这件事只有外壳能做。
+ *
+ * @param kind 'folder' | 'file'
+ * @returns Promise<string> 空串 = 用户取消，或当前环境没有外壳桥（纯浏览器打开）
+ */
+function pickPath(kind) {
+  return new Promise((resolve) => {
+    const wv = window.chrome && window.chrome.webview;
+    if (!wv) { resolve(''); return; }
+    const want = kind === 'folder' ? 'pickedFolder' : 'pickedFile';
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { wv.removeEventListener('message', onMsg); } catch (_) { /* 忽略 */ }
+      resolve(v || '');
+    };
+    const onMsg = (e) => {
+      let d = e.data;
+      if (typeof d === 'string') {
+        try { d = JSON.parse(d); } catch (_) { return; }
+      }
+      if (d && d.cmd === want) finish(d.path);
+    };
+    wv.addEventListener('message', onMsg);
+    wv.postMessage({ cmd: kind === 'folder' ? 'pickFolder' : 'pickFile' });
+    // 外壳没实现这条命令时不会回消息：给一个上限，别让按钮永远停在「选择中…」
+    setTimeout(() => finish(''), 180000);
+  });
+}
+
+/**
+ * 「存到哪个文件夹」弹窗。
+ *
+ * @returns Promise<string|null> null = 取消；'' = 用默认位置；其它 = 用户填/选的目录
+ */
+function askFolder(title, current) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (v) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    modal(title, `
+      <div class="field">
+        <label>目标文件夹</label>
+        <div class="path-row">
+          <input type="text" id="askDir" value="${esc(current || '')}"
+                 placeholder="留空 = 默认位置" spellcheck="false">
+          <button class="btn" id="askDirPick">浏览…</button>
+        </div>
+      </div>`, [
+      { text: '取消', onClick: () => settle(null) },
+      { text: '备份', primary: true, onClick: () => settle(($('#askDir')?.value || '').trim()) },
+    ]);
+    $('#askDirPick')?.addEventListener('click', async () => {
+      const p = await pickPath('folder');
+      const inp = $('#askDir');
+      if (p && inp) inp.value = p;
+    });
+    setTimeout(() => $('#askDir')?.focus(), 30);
+    $('#askDir')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { settle(($('#askDir')?.value || '').trim()); closeModal(); }
+    });
+  });
+}
+
+/**
+ * 让用户给一个「备份文件」的路径：优先系统对话框，拿不到就退回手填。
+ *
+ * 手填这条兜底不是多余的——浏览器直接打开页面时没有外壳桥，
+ * 没有它这条路径就彻底走不通，而用户手里那份 zip 可能在任何盘上。
+ */
+async function askBackupFile() {
+  const p = await pickPath('file');
+  if (p) return p;
+  return askInput('从文件恢复', '备份包路径（.zip 的完整路径）', '', 'D:\\备份\\aigw-backup-20261123-101500.zip');
 }
 
 // ---------------------------------------------------------------- 主题
@@ -2689,10 +2770,13 @@ function buildVaultCard(accountCount) {
   // ---- 动作行
   const row = el('div', 'action-row');
   const bSnap = el('button', 'btn primary', '立即备份');
-  bSnap.title = '把当前账号存到安装目录的 backups\\（不参与自动轮转，不会被自动备份删掉）';
+  bSnap.title = '把当前账号存成一份备份文件（不参与自动轮转，不会被自动备份删掉）';
   bSnap.addEventListener('click', async () => {
+    // 存哪儿由用户决定：默认是上次用过的目录，也能现选一个（D 盘 / U 盘 / 网盘同步盘）。
+    const dir = await askFolder('备份账号', S.vault?.manualDir || '');
+    if (dir === null) return;
     setBtnBusy(bSnap, true, '备份中…');
-    const r = await api.post('/ui/vault/snapshot', {});
+    const r = await api.post('/ui/vault/snapshot', dir ? { dir } : {});
     setBtnBusy(bSnap, false, '');
     toast(r.ok ? r.message : '备份失败：' + r.message, r.ok ? 'ok' : 'err', 6000);
     if (r.ok) { await loadVault(); if (S.page === 'accounts') renderPage(); }
@@ -2724,12 +2808,12 @@ function buildVaultCard(accountCount) {
     const table = el('table', 'grid grid-fixed compact');
     table.id = id;
     // 列宽按**最长真实值**量：
-    // 「11-23 08:09」= 74px + 内边距 → 78；账号数最多两位数 → 38；
-    // 原因最长「账号变更」4 字 → 46；体积「18.8 KB」= 46 → 52。
+    // 「11-23 08:09」等宽字体实测 80px + 内边距 → 92（78 会把分钟截成「14:…」）；
+    // 账号数最多两位数 → 38；原因最长「账号变更」4 字 → 52；体积「18.8 KB」→ 56。
     // 操作列不写死宽度：窄窗（内容区 562）下让它自己吃余量。
     table.innerHTML = `<thead><tr>
-      <th style="width:78px">时间</th><th class="num" style="width:38px">账号</th>
-      <th style="width:46px">原因</th><th style="width:52px">体积</th>
+      <th style="width:92px">时间</th><th class="num" style="width:38px">账号</th>
+      <th style="width:52px">原因</th><th style="width:56px">体积</th>
       <th>操作</th>
     </tr></thead>`;
     const tbody = el('tbody');
@@ -2789,15 +2873,10 @@ function buildVaultCard(accountCount) {
     b.appendChild(renderTable([], 'tblVaultAuto', '还没有任何备份'));
   }
 
-  // ---- 说明：两个目录必须都写出来，否则用户不知道去哪儿找
-  b.appendChild(el('p', 'desc mono selectable',
-    `自动备份：${d.dir}（在数据目录之外，删了数据目录也还在）`));
-  b.appendChild(el('p', 'desc mono selectable',
-    `手动备份：${d.manualDir || '—'}（安装目录下，只有你自己能删）`));
-  b.appendChild(el('p', 'desc',
-    '只存账号（供应商、uid、昵称、凭证），不含调用记录与设置。凭证是明文——'
-    + '导出的文件请勿公开分享。自动备份按份数轮转，手动备份不参与轮转；'
-    + '升级前那份单独保存、不会被轮转掉。'));
+  // ---- 落点只留路径本身，解释文字一律不要（用户明确要求）
+  b.appendChild(el('p', 'desc mono selectable', `自动：${d.dir}`));
+  const mDirs = (d.manualDirs && d.manualDirs.length) ? d.manualDirs : (d.manualDir ? [d.manualDir] : []);
+  if (mDirs.length) b.appendChild(el('p', 'desc mono selectable', `手动：${mDirs.join('　·　')}`));
 
   card.appendChild(b);
   return card;
@@ -5122,16 +5201,16 @@ function renderBackup() {
 
   const actions = $('#pageActions');
   actions.innerHTML = '';
-  // 顶部动作区只放一个按钮：勾选框放这里会把「立即备份」挤成两行，
-  // 而内容区只有 602px。勾选框放到下面的「备份范围」卡片里（那里本来就讲体积）。
+  // 两个动作：备份（可选存到哪儿）、从任意文件恢复。
   const bNew = el('button', 'btn primary', '立即备份');
   bNew.id = 'btnBackupNow';
   bNew.addEventListener('click', () => createBackup(bNew));
-  actions.appendChild(bNew);
-  // 勾选状态跨次进入保持：用户选过一次「不要调用记录」，下次进页面不该被重置回默认。
-  if (S.backupNoLogs === undefined) S.backupNoLogs = false;
-  bNew.title = S.backupNoLogs ? '备份时不带调用记录（包很小，但恢复后调用记录页为空）'
-    : '备份整份数据（含调用记录，包较大）';
+  bNew.title = '备份账号、设置与用量（不含调用记录）';
+  const bFrom = el('button', 'btn', '从文件恢复');
+  bFrom.id = 'btnRestoreFromFile';
+  bFrom.title = '选一份 .zip 备份包（可以在任何盘上），重启后生效';
+  bFrom.addEventListener('click', () => restoreFromFile(bFrom));
+  actions.append(bNew, bFrom);
 
   // ---- 待恢复提示：必须排在最上面，否则用户会以为"已经恢复了"
   const pending = d.pending;
@@ -5145,8 +5224,7 @@ function renderBackup() {
         '备份文件已不存在（可能被移动或删除），重启时会自动跳过。可以先取消，再重新挑一份。'));
     } else {
       b.appendChild(el('p', 'desc',
-        '重启时先把当前数据整体快照一份（回滚点），再替换白名单内的条目。'
-        + 'webview2 缓存与调用记录的取舍以备份时的选择为准。'));
+        '重启时先给当前数据拍一份快照（回滚点），再替换白名单内的条目。'));
     }
     const row = el('div', 'action-row');
     const cancel = el('button', 'btn', '取消这次恢复');
@@ -5195,7 +5273,7 @@ function renderBackup() {
   if (items.length === 0) {
     tbody.innerHTML = `<tr><td colspan="5"><div class="empty">
       <span class="big">还没有备份</span>
-      <span>点右上角「立即备份」，会在数据目录旁边生成一份 .zip（里面是明文，可直接解压查看）</span></div></td></tr>`;
+      <span>点右上角「立即备份」，可以自己选存到哪个文件夹</span></div></td></tr>`;
   } else {
     items.forEach((it) => {
       const tr = el('tr');
@@ -5212,7 +5290,7 @@ function renderBackup() {
         <td class="num cell-muted">${it.entryCount || 0}</td>
         <td class="cell-muted">${esc(it.appVersion || '—')}</td>
         <td></td>`;
-      tr.title = it.name + (it.includeCallLogs ? '' : '\n（不含调用记录）');
+      tr.title = it.path || it.name;
       const ops = el('div', 'row-ops');
       const restore = el('button', 'mini-btn wide', '恢复');
       restore.title = '把数据替换成这份备份（重启后生效）';
@@ -5235,73 +5313,19 @@ function renderBackup() {
   wrap.appendChild(table);
   card.appendChild(wrap);
   body.appendChild(card);
-
-  // ---- 说明卡：范围与位置必须写出来，否则用户不知道"备份到底带走了什么"
-  const info = el('div', 'card');
-  info.appendChild(headWith('备份范围', '白名单制，不是整目录打包'));
-  const ib = el('div', 'card-body pad-top stack-12');
-  ib.appendChild(el('p', 'desc',
-    `存放目录：${d.dir}（在数据目录之外——放在里面的话「先清空再解压」会把备份自己删掉）`));
-  ib.appendChild(el('p', 'desc mono selectable', (d.scope || []).join(' · ')));
-  ib.appendChild(el('p', 'desc',
-    '不含 webview2/（Chromium 缓存，约 80 MB，与本项目数据无关）、.instance.json（写死旧端口）、'
-    + '.update-cache.json。'));
-  ib.appendChild(el('p', 'desc err-text',
-    '包内是明文：解压后可以直接用编辑器看账号、设置、调用记录。'
-    + '磁盘上的 secure/ 仍然加密，但备份包不加密——个人自用、备份只在自己手里流转，'
-    + '加密只会让它压不动（密文压缩比 1.00）、也让你没法直接看一眼。'
-    + '如果哪天要传到别人能碰到的地方，先想清楚这一点。'));
-  ib.appendChild(el('p', 'desc',
-    '体积构成：调用记录（secure/logs/，每次对话一个 chatcmpl-* 文件）占九成以上。'
-    + '这部分是唯一的大头，其余账号/设置/用量加起来只有几十 KB。'
-    + '解成明文后 deflate 才压得动（压缩比从 1.00 降到 0.32），所以同一次备份从 2.2 MB 缩到 0.75 MB。'));
-
-  // ---- 调用记录开关
-  // 后端 create(includeCallLogs) 一直支持 false，但前端早先把 true 写死了，
-  // 界面文案还承诺「关掉后包会小一半」——承诺了却没有开关。这里补上。
-  // 默认带（历史行为不变）；勾掉后包从 ~750 KB 掉到 ~60 KB。
-  const sw = el('label', 'switch backup-log-switch');
-  const cb = el('input');
-  cb.type = 'checkbox';
-  cb.id = 'backupNoLogs';
-  cb.checked = !S.backupNoLogs;
-  const track = el('span', 'track');
-  const swText = el('span', null, '包含调用记录');
-  sw.append(cb, track, swText);
-  const logHint = el('p', 'desc', '');
-  const paintHint = () => {
-    logHint.textContent = cb.checked
-      ? '整包约 0.7–1 MB（100+ 个小文件）。恢复后「调用记录」页有历史。'
-      : '整包约 60 KB，只剩账号/设置/用量。恢复后「调用记录」页为空。';
-  };
-  cb.addEventListener('change', () => {
-    S.backupNoLogs = !cb.checked;
-    paintHint();
-    // 顶部按钮的 title 也要跟着说明当前口径
-    const b = $('#btnBackupNow');
-    if (b) {
-      b.title = S.backupNoLogs ? '备份时不带调用记录（包很小，但恢复后调用记录页为空）'
-        : '备份整份数据（含调用记录，包较大）';
-    }
-  });
-  paintHint();
-  ib.append(sw, logHint);
-  ib.appendChild(el('p', 'desc',
-    '恢复会先把当前数据整体快照一份（回滚包），再替换上面这些条目；'
-    + '回滚包同样出现在列表里，恢复错了可以直接回退。'));
-  ib.appendChild(el('p', 'desc',
-    '恢复明文包后会自动重新加密 secure/，不会留下明文凭证。'
-    + '旧版本生成的加密包仍可恢复——包里自带 master.key，同一个密钥解得开。'));
-  info.appendChild(ib);
-  body.appendChild(info);
 }
 
+/**
+ * 立即备份。
+ *
+ * 先问存到哪儿（默认上次那个目录，留空=默认位置），再发请求。
+ * 上一次的目录由服务端记住，所以第二次点基本是「回车确认」两下。
+ */
 async function createBackup(btn) {
+  const dir = await askFolder('备份到哪儿', (S.backupList && S.backupList.dir) || '');
+  if (dir === null) return;
   setBtnBusy(btn, true, '备份中…');
-  // includeCallLogs 由「备份范围」卡片上的开关决定（S.backupNoLogs）。
-  // 勾掉调用记录时包只有几十 KB，但不需要为此缩短超时——带的时候要 100+ 个小文件。
-  const withLogs = !S.backupNoLogs;
-  const r = await api.post('/ui/backup/create', { includeCallLogs: withLogs }, 60000);
+  const r = await api.post('/ui/backup/create', dir ? { dir } : {}, 60000);
   setBtnBusy(btn, false, '');
   if (r.ok === false) {
     toast('备份失败：' + r.message, 'err', 6000);
@@ -5310,6 +5334,27 @@ async function createBackup(btn) {
   toast(r.message || '已备份', 'ok', 5000);
   await loadBackup();
   if (S.page === 'backup') renderPage();
+}
+
+/**
+ * 从任意位置的 .zip 恢复。
+ *
+ * 与列表里的「恢复」是同一件事，只是定位方式不同——用户那份备份可能在
+ * U 盘上、在网盘同步目录里，或早就从列表目录挪走了。
+ */
+async function restoreFromFile(btn) {
+  const path = await askBackupFile();
+  if (!path) return;
+  const yes = await confirmBox('从文件恢复',
+    `将把当前数据替换为：\n${path}\n\n`
+    + '重启时会先自动快照一份当前数据（回滚包）。\n'
+    + '现在点确定只是登记，不会立刻改动任何文件。');
+  if (!yes) return;
+  setBtnBusy(btn, true, '登记中…');
+  const r = await api.post('/ui/backup/restore', { zip: path });
+  setBtnBusy(btn, false, '');
+  toast(r.message || (r.ok ? '已登记恢复' : '登记失败'), r.ok ? 'ok' : 'err', 6000);
+  if (r.ok) { await loadBackup(); if (S.page === 'backup') renderPage(); }
 }
 
 async function requestRestore(name) {
