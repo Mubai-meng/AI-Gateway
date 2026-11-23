@@ -189,6 +189,70 @@ internal class AccountVault(
         daily.drop(keepCount).forEach { runCatching { it.file.delete() } }
     }
 
+    /**
+     * 把旧的明文 `.json` 备份就地重压成 `.json.gz`，**校验通过后**才删原件。
+     *
+     * 为什么要做：1.0.2 起落盘改成 gzip，但**已经存在的**老文件不会被自动改写——
+     * 它们参与轮转（`isAccountFile` 认 `.json`），可 10 份的额度远没满，
+     * 于是长期和新格式混在一起，白占 5 倍空间（19 KB 对 7 KB）。
+     *
+     * 三条安全约束，缺一条就可能丢数据：
+     * 1. 先写 `.json.gz`（临时文件 + 原子替换），落盘成功才进下一步；
+     * 2. **校验新文件能解压、能解析、账号数与原名一致**，不一致就当失败；
+     * 3. 校验通过后才删 `.json`。任何一步失败都原样留着旧文件——
+     *    宁可多占 19 KB，也不能让一份备份凭空消失。
+     *
+     * 只处理自动/手动两个目录里**前缀合法**的 `.json`，其它文件一概不碰。
+     * 已在 `.json.gz` 的跳过（不重复压）。
+     *
+     * @return 实际转换的文件数（0 表示没有可转换的）。
+     */
+    fun migrateLegacyPlaintext(): Int {
+        var done = 0
+        val dirs = listOf(vaultDir to listOf(AUTO_PREFIX, "accounts"), manualDir to listOf(MANUAL_PREFIX))
+        for ((dir, prefixes) in dirs) {
+            if (!dir.isDirectory) continue
+            val old = dir.listFiles { f ->
+                f.isFile && f.name.endsWith(".json") && prefixes.any { f.name.startsWith("$it-") }
+            } ?: continue
+            for (src in old) {
+                val base = src.name.removeSuffix(".json")
+                val dst = File(dir, "$base.$SUFFIX")
+                // 源文件的账号数：重压后必须一模一样，否则视为失败
+                val srcCount = runCatching {
+                    JsonParser.parseString(AccountPack.decode(src.readBytes())).asJsonObject
+                        .get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray?.size()
+                }.getOrNull() ?: continue   // 旧文件本身读不出 → 不动它
+
+                val verified: Boolean = if (dst.isFile) {
+                    // 同名 gz 已经存在：确认它是同一份内容才敢删旧明文
+                    runCatching {
+                        JsonParser.parseString(AccountPack.decode(dst.readBytes())).asJsonObject
+                            .get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray?.size()
+                    }.getOrNull() == srcCount
+                } else {
+                    val tmp = File(dir, "${dst.name}.tmp")
+                    runCatching {
+                        tmp.writeBytes(AccountPack.encode(AccountPack.decode(src.readBytes())))
+                        if (!tmp.renameTo(dst)) {
+                            tmp.copyTo(dst, overwrite = true)
+                            tmp.delete()
+                        }
+                        if (!dst.isFile || dst.length() == 0L) return@runCatching false
+                        JsonParser.parseString(AccountPack.decode(dst.readBytes())).asJsonObject
+                            .get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray?.size() == srcCount
+                    }.getOrElse {
+                        runCatching { tmp.delete() }
+                        false
+                    }
+                }
+
+                if (verified && runCatching { src.delete() }.getOrDefault(false)) done++
+            }
+        }
+        return done
+    }
+
     // ---------------------------------------------------------------- 查询
 
     /** 列出全部备份（自动 + 手动，按时间倒序，带 `auto` 标记便于界面分组）。 */

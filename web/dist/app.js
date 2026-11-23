@@ -2906,9 +2906,9 @@ function saveBlobAsFile(blob, filename) {
 function openVaultImport() {
   const items = (S.vault && S.vault.items) || [];
   const body = `
-    <p class="desc">从文件导入：选一个以前导出的 .json（内容需是 <span class="mono">aigw-accounts</span> 格式）。</p>
+    <p class="desc">从文件导入：选一个以前导出的备份（<span class="mono">.json.gz</span> 或未压缩的 <span class="mono">.json</span>，内容需是 <span class="mono">aigw-accounts</span> 格式）。</p>
     <label class="file-pick">
-      <input type="file" id="vaultFile" accept=".json,application/json">
+      <input type="file" id="vaultFile" accept=".json,.json.gz,.gz,application/json,application/gzip">
       <span class="desc" id="vaultFileHint">未选择文件</span>
     </label>
     ${items.length ? `<p class="desc" style="margin-top:12px">或从保险柜里的备份导入：</p>

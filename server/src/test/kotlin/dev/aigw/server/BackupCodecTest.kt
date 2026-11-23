@@ -20,8 +20,14 @@ class BackupCodecTest {
 
     private val magic = byteArrayOf(0x41, 0x47, 0x57, 0x31)
 
-    private fun tempDir(): File =
-        Files.createTempDirectory("aigw-backupcodec").toFile().also { it.deleteOnExit() }
+    private fun tempDir(): File {
+        // 同样要建 root/data：BackupManager 的 backupDir 是 dataDir.parent/backups，
+        // 直接用 Temp\xxx 作 dataDir 会让备份落进共享的 Temp\backups，
+        // 几个用例的 zip 混在一起（读列表时会互相干扰，也会在 Temp 里留垃圾）。
+        val root = Files.createTempDirectory("aigw-backupcodec").toFile()
+        root.deleteOnExit()
+        return File(root, "data").apply { mkdirs() }
+    }
 
     private fun newKey(): ByteArray = ByteArray(32) { (it * 7 + 3).toByte() }
 

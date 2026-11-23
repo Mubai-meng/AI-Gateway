@@ -74,6 +74,12 @@ fun main(args: Array<String>) {
 
     // 账号保险柜：启动即快照一次（跨版本升级时会额外留一份「升级前」快照）。
     // 放在 migrateAccounts() 之后：迁移把旧 uid 口径修正完，快照才记的是能用的账号。
+    //
+    // 先做一次旧格式重压（明文 .json → .json.gz）。顺序很重要：放在快照之前，
+    // 这样本轮新写的快照与转换后的历史文件是同一套后缀，不会又多出一份明文。
+    runCatching { host.vault.migrateLegacyPlaintext() }.getOrNull()?.let {
+        if (it > 0) println("[aigw-server] 账号保险柜：已把 $it 份旧明文备份重压为 .json.gz")
+    }
     runCatching { host.vaultSnapshotOnStartup() }.getOrNull()?.let {
         if (it.isNotEmpty()) println("[aigw-server] 账号保险柜：$it")
     }
