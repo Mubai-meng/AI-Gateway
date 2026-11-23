@@ -473,6 +473,9 @@ internal class UiRoutes(private val host: EngineHost) {
     }
 
     private fun exportAccounts(): UiOut {
+        // 原样导出（不裁字段）：所有供应商的 parse 都把 accessToken 当必填，
+        // 裁掉会让 trae/codebuddy 直接「凭证无法解析」（实测，见 [AccountPack] 注释）。
+        // 体积靠前端 gzip 压：19.2 KB → 7.2 KB。
         val text = engine.exportAccounts()
         // 用 JsonObject 包一层而不是把整份 JSON 塞进 message：message 是给人看的短句，
         // 塞 20KB 进去会让前端 toast 弹一个满屏的框。

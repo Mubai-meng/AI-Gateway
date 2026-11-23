@@ -62,9 +62,10 @@ class AccountVaultTest {
         val manual = v.writeManual(payload(account("u1")), "0.9.9")
         assertNotNull(auto)
         assertNotNull(manual)
-        // 形状：auto-20261123-080000.json / manual-20261123-080000.json
-        assertTrue(Regex("""^auto-\d{8}-\d{6}(-\d+)?\.json$""").matches(auto!!.name), auto.name)
-        assertTrue(Regex("""^manual-\d{8}-\d{6}(-\d+)?\.json$""").matches(manual!!.name), manual.name)
+        // 形状：auto-20261123-080000.json.gz / manual-20261123-080000.json.gz
+        // 1.0.2 起是 gzip（瘦身后 18.8 KB → 约 4 KB），后缀随之变成 .json.gz
+        assertTrue(Regex("""^auto-\d{8}-\d{6}(-\d+)?\.json\.gz$""").matches(auto!!.name), auto.name)
+        assertTrue(Regex("""^manual-\d{8}-\d{6}(-\d+)?\.json\.gz$""").matches(manual!!.name), manual.name)
         // 落在各自目录
         assertEquals(v.vaultDir.absoluteFile, auto.absoluteFile.parentFile)
         assertEquals(v.manualDir.absoluteFile, manual.absoluteFile.parentFile)

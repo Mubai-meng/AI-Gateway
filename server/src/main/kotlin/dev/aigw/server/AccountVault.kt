@@ -128,16 +128,16 @@ internal class AccountVault(
         // 同一秒内连写两次（启动 + 账号变更几乎同时，或连点手动备份）会撞名。
         // 与 BackupManager 同样的坑：renameTo 目标存在时不覆盖，随后 copyTo(overwrite) 会吃掉上一份。
         val base = "$prefix-$stamp"
-        var target = File(dir, "$base.json")
+        var target = File(dir, "$base.$SUFFIX")
         var i = 2
         while (target.exists()) {
-            target = File(dir, "$base-$i.json")
+            target = File(dir, "$base-$i.$SUFFIX")
             i++
         }
 
         val count = runCatching { countAccounts(payload) }.getOrDefault(0)
         return try {
-            // 先写临时文件再原子替换：写到一半被强杀不会留下半个 JSON 让导入端报「格式非法」
+            // 先写临时文件再原子替换：写到一半被强杀不会留下半个文件让导入端报「格式非法」
             val tmp = File(dir, "${target.name}.tmp")
             // 附上备份专有元数据。信封本身是 `aigw-accounts`，多出的字段
             // `AccountTransfer.decode` 会忽略（它只挑 format/version/accounts）——
@@ -148,7 +148,9 @@ internal class AccountVault(
                 obj.addProperty("reason", reason)
                 obj.toString()
             }.getOrDefault(payload)
-            tmp.writeText(enriched, Charsets.UTF_8)
+            // 只压缩、不裁字段（裁 accessToken 会让 trae/codebuddy 直接解析失败，
+            // 实测过，见 [AccountPack] 注释）。19.2 KB → 7.2 KB。
+            tmp.writeBytes(AccountPack.encode(AccountPack.mark(enriched)))
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
@@ -220,11 +222,16 @@ internal class AccountVault(
         }
     }
 
-    /** 读出某份备份的正文（导出/预览用）。自动或手动都认。 */
+    /**
+     * 读出某份备份的正文（导出/预览用）。自动或手动都认。
+     *
+     * 新文件是 gzip（读出来是明文 JSON），老文件是明文 JSON —— [AccountPack.decode] 看魔数处理。
+     * 返回的**始终是可直接导入的 JSON 文本**，调用方不需要知道磁盘上的形态。
+     */
     fun read(name: String): String? {
         val f = safeFile(name) ?: return null
         if (!f.isFile) return null
-        return runCatching { f.readText(Charsets.UTF_8) }.getOrNull()
+        return runCatching { AccountPack.decode(f.readBytes()) }.getOrNull()
     }
 
     fun delete(name: String): JsonObject {
@@ -242,7 +249,7 @@ internal class AccountVault(
      */
     private fun safeFile(name: String): File? {
         if (name.contains('/') || name.contains('\\') || name.contains("..")) return null
-        if (!name.endsWith(".json")) return null
+        if (!AccountPack.isAccountFile(name)) return null
         return when {
             name.startsWith("$AUTO_PREFIX-") -> File(vaultDir, name)
             name.startsWith("$MANUAL_PREFIX-") -> File(manualDir, name)
@@ -257,7 +264,7 @@ internal class AccountVault(
     private fun scanManual(): List<Entry> = scanDir(manualDir, MANUAL_PREFIX)
 
     private fun scanDir(dir: File, prefix: String): List<Entry> {
-        val files = dir.listFiles { f -> f.isFile && f.name.startsWith("$prefix-") && f.name.endsWith(".json") }
+        val files = dir.listFiles { f -> f.isFile && f.name.startsWith("$prefix-") && AccountPack.isAccountFile(f.name) }
             ?: return emptyList()
         return files.mapNotNull { f ->
             val head = runCatching { readHead(f) }.getOrNull() ?: return@mapNotNull null
@@ -274,7 +281,7 @@ internal class AccountVault(
     /** 读头部三个字段；不整份 parse，备份多时省内存。 */
     private fun readHead(f: File): Triple<Int, Long, String>? {
         val obj = runCatching {
-            JsonParser.parseString(f.readText(Charsets.UTF_8)).asJsonObject
+            JsonParser.parseString(AccountPack.decode(f.readBytes())).asJsonObject
         }.getOrNull() ?: return null
         val accounts = obj.get("accounts")?.takeIf { it.isJsonArray }?.asJsonArray
         val at = obj.get("exportedAt")?.takeIf { it.isJsonPrimitive }?.asLong ?: f.lastModified()
@@ -290,12 +297,12 @@ internal class AccountVault(
      */
     private fun reasonOf(f: File): String {
         val obj = runCatching {
-            JsonParser.parseString(f.readText(Charsets.UTF_8)).asJsonObject
+            JsonParser.parseString(AccountPack.decode(f.readBytes())).asJsonObject
         }.getOrNull()
         obj?.get("reason")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotEmpty() }
             ?.let { return it }
         // 旧命名：accounts-<reason>-<stamp>[-N].json
-        val parts = f.name.removePrefix("accounts-").removeSuffix(".json").split('-')
+        val parts = f.name.removePrefix("accounts-").removeSuffix(".gz").removeSuffix(".json").split('-')
         val reasonEnd = parts.indexOfFirst { it.length == 8 && it.all { c -> c.isDigit() } }
         return if (reasonEnd > 0) parts.take(reasonEnd).joinToString("-") else "unknown"
     }
@@ -346,7 +353,7 @@ internal class AccountVault(
      * 但这里刻意不算昵称——昵称变化通常伴着凭证刷新，一起触发就够了。
      */
     private fun sameAccounts(file: File, payload: String): Boolean = runCatching {
-        val a = JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
+        val a = JsonParser.parseString(AccountPack.decode(file.readBytes())).asJsonObject
         val b = JsonParser.parseString(payload).asJsonObject
         if (a.get("format")?.asString != ACCOUNT_TRANSFER_FORMAT) return false
         if (b.get("format")?.asString != ACCOUNT_TRANSFER_FORMAT) return false
@@ -380,10 +387,13 @@ internal class AccountVault(
         /** 自动备份默认保留 10 份。升级前那份另算。手动备份不轮转。 */
         const val DEFAULT_KEEP = 10
 
-        /** 自动备份文件名前缀：`auto-20261123-080000.json`。 */
+        /** 落盘后缀。gzip 后是 `.json.gz`——双击能看出是压缩过的，也知道要解压才看得到内容。 */
+        const val SUFFIX = "json.gz"
+
+        /** 自动备份文件名前缀：`auto-20261123-080000.json.gz`。 */
         const val AUTO_PREFIX = "auto"
 
-        /** 手动备份文件名前缀：`manual-20261123-080000.json`。 */
+        /** 手动备份文件名前缀：`manual-20261123-080000.json.gz`。 */
         const val MANUAL_PREFIX = "manual"
 
         const val REASON_STARTUP = "startup"

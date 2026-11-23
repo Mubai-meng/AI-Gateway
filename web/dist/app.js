@@ -2817,8 +2817,20 @@ async function exportAccountsToFile(btn) {
     toast('导出失败：' + ((r && r.message) || '没有拿到内容'), 'err', 5000);
     return;
   }
-  saveTextAsFile(r.payload, accountFileName('all'));
-  toast(r.message || '已导出', 'ok', 5000);
+  // 服务端已经瘦身（去掉能被刷新的 accessToken），这里再 gzip：
+  // 10 KB 的 JSON → 约 4 KB。落成 .json.gz，导入时自动解压（见 readAccountFile）。
+  const { blob, bytes } = await gzipJson(r.payload);
+  saveBlobAsFile(blob, accountFileName('all').replace(/\.json$/, '.json.gz'));
+  toast(`${r.message || '已导出'} · ${AccountVaultSize(r.payload.length)} → ${AccountVaultSize(bytes)}`, 'ok', 6000);
+}
+
+/** 把 JSON 文本压成 gzip。WebView2 有 CompressionStream，不需要引库。 */
+async function gzipJson(text) {
+  const out = await new Response(
+    new Blob([text]).stream().pipeThrough(new CompressionStream('gzip')),
+  ).arrayBuffer();
+  const bytes = new Uint8Array(out);
+  return { blob: new Blob([bytes], { type: 'application/gzip' }), bytes: bytes.length };
 }
 
 /** 下载某份备份（内容是服务端那份文件的原样字节）。 */
@@ -2837,8 +2849,10 @@ async function downloadVault(name, btn) {
       return;
     }
     const text = await res.text();
-    saveTextAsFile(text, name);
-    toast('已下载 ' + name, 'ok');
+    // 服务端回的是解压后的明文 JSON，文件名却还是 .json.gz —— 下载时去掉后缀，
+    // 否则用户拿到的是一份「.gz 里装明文」的文件，双击解压会报「不是 gzip」。
+    saveTextAsFile(text, name.replace(/\.gz$/, ''));
+    toast('已下载 ' + name.replace(/\.gz$/, ''), 'ok');
   } catch (e) {
     toast('下载失败：' + (e && e.message ? e.message : e), 'err', 5000);
   } finally {
@@ -2857,6 +2871,11 @@ function accountFileName(tag) {
 /** 把一段文本存成文件（Blob + a[download]，WebView2 与浏览器都吃）。 */
 function saveTextAsFile(text, filename) {
   const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  saveBlobAsFile(blob, filename);
+}
+
+/** 任意 Blob 落盘（导出的 .json.gz 走这条）。 */
+function saveBlobAsFile(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = el('a');
   a.href = url;
@@ -2901,11 +2920,15 @@ function openVaultImport() {
     if (!f) return;
     hint.textContent = '正在读取 ' + f.name + '…';
     try {
-      // 账号文件是纯文本 JSON，readAsText 比 base64 省一层编解码
-      const text = await readFileAsText(f);
-      pickedText = text;
+      // 备份是 .json.gz：解压后才拿到 JSON 正文（见 readAccountFile）
+      const got = await readAccountFile(f);
+      pickedText = got.text;
       pickedName = null;
-      hint.textContent = `${f.name}（${AccountVaultSize(text.length)}）`;
+      const count = (JSON.parse(got.text).accounts || []).length;
+      hint.textContent = `${f.name}`
+        + `${got.gz ? '（gzip，已解压）' : ''}`
+        + `，${AccountVaultSize(f.size)} → ${AccountVaultSize(got.text.length)}`
+        + `，${count} 个账号`;
     } catch (e) {
       hint.textContent = '读取失败：' + (e && e.message ? e.message : e);
       pickedText = null;
@@ -2965,12 +2988,31 @@ async function doVaultImport(name, btn) {
 }
 
 /** 读文本文件（账号 JSON 都是纯文本）。 */
-function readFileAsText(file) {
+/**
+ * 读账号文件：`.json.gz` 自动解压，老 `.json` 直接当文本。
+ *
+ * 保险柜把备份落成 `.json.gz`（gzip 压缩，19 KB → 7 KB，字段一个不少）。
+ * 用户拿这个文件跨机导入时必须能读——`DecompressionStream` 是 Chromium 原生能力，
+ * WebView2 支持，不用引任何库。
+ *
+ * 判据是 gzip 魔数而不是文件名：用户可能手工改了扩展名。
+ */
+async function readAccountFile(file) {
+  const buf = new Uint8Array(await readFileAsBytes(file));
+  const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+  if (!isGzip) return { text: new TextDecoder('utf-8').decode(buf), gz: false };
+  const out = await new Response(
+    new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')),
+  ).arrayBuffer();
+  return { text: new TextDecoder('utf-8').decode(new Uint8Array(out)), gz: true };
+}
+
+function readFileAsBytes(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onload = () => resolve(fr.result);
     fr.onerror = () => reject(fr.error || new Error('读取文件失败'));
-    fr.readAsText(file);
+    fr.readAsArrayBuffer(file);
   });
 }
 
