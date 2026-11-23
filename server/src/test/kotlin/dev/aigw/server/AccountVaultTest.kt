@@ -52,9 +52,11 @@ class AccountVaultTest {
         // 只比父目录名而不用全路径 startsWith：这台机器的 TEMP 是 8.3 短名
         // （C:\Users\SQUEMA~1\...），而 vaultDir 会被换成长名，字面比较必然不等。
         val prod = AccountVault(dataDir, installDir)
-        assertEquals("aigw-account-vault", prod.vaultDir.name)
+        // 数据目录名做子目录：多开/验证实例之间不互相看到对方的账号备份
+        assertEquals("aigw-account-vault", prod.vaultDir.parentFile?.name)
+        assertEquals("data", prod.vaultDir.name)
         assertTrue(
-            prod.vaultDir.parentFile?.name.equals("Temp", ignoreCase = true),
+            prod.vaultDir.parentFile?.parentFile?.name.equals("Temp", ignoreCase = true),
             "应落在系统临时目录下：${prod.vaultDir.absolutePath}",
         )
         assertTrue(!prod.vaultDir.absolutePath.startsWith(dataDir.absolutePath), prod.vaultDir.absolutePath)

@@ -72,11 +72,24 @@ internal class AccountVault(
      * 仍然在数据目录之外——放在里面会跟着数据目录一起被删（与 BackupManager 同一个教训），
      * 只是不再占用户可见的位置。`java.io.tmpdir` 在 Windows 上就是
      * `C:\Users\<user>\AppData\Local\Temp`。
+     *
+     * 里面再按**数据目录名**分一层：临时目录是全局的，两个数据目录的实例
+     * （正式 + 我跑验证用的实例）共用一个目录的话，对方的账号备份会出现在你的列表里。
+     * 实测踩过：正式界面上出现过测试实例的「已备份 1 个账号」。
      */
-    val vaultDir: File = autoDir?.absoluteFile ?: File(tempRoot(), "aigw-account-vault")
+    val vaultDir: File = autoDir?.absoluteFile
+        ?: File(File(tempRoot(), "aigw-account-vault"), namespaceOf(dataDir))
 
-    /** 老版本的自动备份目录（`<dataDir>/../account-vault`）。只读、仍参与列表与删除。 */
-    val legacyVaultDir: File = File(dataDir.absoluteFile.parentFile, "account-vault")
+    /**
+     * 老落点，只读、仍参与列表与删除：
+     * 1. `<dataDir>/../account-vault`（1.0.2 之前）；
+     * 2. `%TEMP%\aigw-account-vault` 根下平铺（今天这一版短暂用过的形态）。
+     *    不认的话，用户升级到这个版本之前写的那几份会凭空消失。
+     */
+    val legacyAutoDirs: List<File> = buildList {
+        if (autoDir == null) add(File(tempRoot(), "aigw-account-vault"))
+        add(File(dataDir.absoluteFile.parentFile, "account-vault"))
+    }.map { it.absoluteFile }.filter { it != vaultDir.absoluteFile }.distinct()
 
     /**
      * 手动备份的候选目录清单。
@@ -105,8 +118,16 @@ internal class AccountVault(
     /** 自动备份保留份数（启动 / 账号变更）。 */
     var keepCount: Int = DEFAULT_KEEP
 
-    /** 上次自动备份的记录（供界面显示「有没有在自动跑」）。 */
-    private val stateFile: File = File(vaultDir, STATE_NAME)
+    /**
+     * 上次备份的记录（供界面显示「有没有在自动跑」）。
+     *
+     * 放在**数据目录**而不是自动备份目录里：自动备份目录是进程级共享的
+     * `%TEMP%\aigw-account-vault`，两个数据目录的实例（正式 + 测试）会互相覆盖
+     * 这条状态——实测在正式界面上看到过测试实例的「已备份 1 个账号」。
+     * 状态是「这个安装最近的备份结果」，本来就该跟着数据目录走；
+     * 它不在 BackupManager 的白名单里，所以不会被打进整库备份。
+     */
+    private val stateFile: File = File(dataDir, STATE_NAME)
 
     /** 一份快照在磁盘上的形态。 */
     private data class Entry(
@@ -252,7 +273,7 @@ internal class AccountVault(
         var done = 0
         val jobs = buildList {
             add(vaultDir to listOf(AUTO_PREFIX, "accounts"))
-            add(legacyVaultDir to listOf(AUTO_PREFIX, "accounts"))
+            legacyAutoDirs.forEach { add(it to listOf(AUTO_PREFIX, "accounts")) }
             manualDirs.all().forEach { add(it to listOf(MANUAL_PREFIX)) }
         }
         for ((dir, prefixes) in jobs) {
@@ -365,7 +386,7 @@ internal class AccountVault(
         return when {
             // 自动备份：当前临时目录优先，其次是老版本的目录（升级后旧文件仍在原处）
             name.startsWith("$AUTO_PREFIX-") ->
-                listOf(vaultDir, legacyVaultDir).map { File(it, name) }.firstOrNull { it.isFile }
+                (listOf(vaultDir) + legacyAutoDirs).map { File(it, name) }.firstOrNull { it.isFile }
                     ?: File(vaultDir, name)
             // 手动备份：用户可能把同一份名前缀的文件存在多个自选目录里，按清单顺序找第一个
             name.startsWith("$MANUAL_PREFIX-") -> manualDirs.resolve(name) ?: File(manualDir, name)
@@ -375,7 +396,7 @@ internal class AccountVault(
 
     /** 自动备份目录里的条目：当前临时目录 + 老版本目录，两处都要列出来。 */
     private fun scanAuto(): List<Entry> =
-        (listOf(vaultDir, legacyVaultDir).distinct().flatMap { scanDir(it, AUTO_PREFIX) })
+        (listOf(vaultDir) + legacyAutoDirs).distinct().flatMap { scanDir(it, AUTO_PREFIX) }
             .sortedByDescending { it.atMillis }
 
     /** 手动备份目录里的条目：扫描用户选过的全部目录。 */
@@ -444,7 +465,7 @@ internal class AccountVault(
         }
         lastState = obj
         runCatching {
-            vaultDir.mkdirs()
+            stateFile.parentFile?.mkdirs()
             stateFile.writeText(obj.toString(), Charsets.UTF_8)
         }
     }
@@ -526,6 +547,20 @@ internal class AccountVault(
             bytes < 1024 -> "$bytes B"
             bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
             else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        }
+
+        /**
+         * 自动备份在临时目录里的子目录名：取数据目录名，非法字符换掉。
+         *
+         * 只有一个数据目录时就是 `Temp\aigw-account-vault\data`；多开或跑验证实例时
+         * 各自分开——临时目录是全局的，不分层就会互相看到对方的账号备份。
+         */
+        private fun namespaceOf(dataDir: File): String {
+            val raw = dataDir.absoluteFile.name
+            val safe = raw.map { c ->
+                if (c.isLetterOrDigit() || c == '.' || c == '-' || c == '_') c else '_'
+            }.joinToString("")
+            return safe.ifBlank { "data" }
         }
 
         /**

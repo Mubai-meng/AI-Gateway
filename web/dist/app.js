@@ -2763,7 +2763,9 @@ function buildVaultCard(accountCount) {
     const when = last.atMillis ? new Date(last.atMillis).toLocaleString('zh-CN') : '';
     b.appendChild(el('p', last.ok === false ? 'desc err-text' : 'desc',
       `上次备份：${last.message}${when ? '（' + when + '）' : ''}`));
-  } else {
+  } else if (autoCount === 0) {
+    // **有备份时不要说「还没有记录」**：账号没变时启动快照会跳过不写状态，
+    // 于是「列表里躺着 4 份」和「还没有自动备份记录」会同时挂在界面上。
     b.appendChild(el('p', 'desc', '还没有自动备份记录。启动、账号变更、版本升级时会自动各存一份。'));
   }
 
